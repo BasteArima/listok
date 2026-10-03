@@ -1,0 +1,14 @@
+{{define "content"}}
+<form class="card auth" method="post" action="/login">
+  <h1 class="brand-lg">listok</h1>
+  {{if .Error}}<p class="alert" role="alert">{{.Error}}</p>{{end}}
+  <label>Логин
+    <input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus value="{{.Form.username}}">
+  </label>
+  <label>Пароль
+    <input name="password" type="password" autocomplete="current-password" required>
+  </label>
+  <input type="hidden" name="next" value="{{.Form.next}}">
+  <button class="primary" type="submit">Войти</button>
+</form>
+{{end}}

@@ -12,8 +12,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/BasteArima/listok/internal/auth"
 	"github.com/BasteArima/listok/internal/config"
 	"github.com/BasteArima/listok/internal/db"
+	"github.com/BasteArima/listok/internal/store"
 	"github.com/BasteArima/listok/internal/web"
 )
 
@@ -52,9 +54,26 @@ func run(log *slog.Logger) error {
 		log.Info("применены миграции", "versions", applied)
 	}
 
+	st := store.New(conn)
+	authSvc := auth.NewService(st, log, nil)
+	setupToken, err := authSvc.Bootstrap(ctx, cfg.AdminUser, cfg.AdminPassword)
+	if err != nil {
+		return err
+	}
+	if setupToken != "" {
+		// Единственное место, где токен печатается целиком: в этом его смысл. Живёт до рестарта.
+		log.Warn("пользователей нет: откройте /setup и введите setup-токен", "setup_token", setupToken)
+	}
+	go cleanupSessions(ctx, st, log)
+
+	handler, err := web.New(web.Deps{DB: conn, Store: st, Auth: authSvc, Config: cfg, Log: log})
+	if err != nil {
+		return err
+	}
+
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           web.New(conn, log),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 		// WriteTimeout не ставим: long-poll фидов держит ответ до LISTOK_LONGPOLL_MAX.
@@ -80,4 +99,22 @@ func run(log *slog.Logger) error {
 		}
 	}
 	return nil
+}
+
+// cleanupSessions раз в час удаляет просроченные сессии. Позже переедет в internal/jobs.
+func cleanupSessions(ctx context.Context, st *store.Store, log *slog.Logger) {
+	t := time.NewTicker(time.Hour)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if n, err := st.DeleteExpiredSessions(ctx, time.Now()); err != nil {
+				log.Warn("чистка сессий", "err", err)
+			} else if n > 0 {
+				log.Info("удалены просроченные сессии", "count", n)
+			}
+		}
+	}
 }

@@ -1,0 +1,21 @@
+{{define "content"}}
+<form class="card auth" method="post" action="/setup">
+  <h1 class="brand-lg">listok</h1>
+  <p class="muted">Первый запуск. Создайте администратора. Setup-токен напечатан в логе сервиса:
+    <code>docker logs listok</code>.</p>
+  {{if .Error}}<p class="alert" role="alert">{{.Error}}</p>{{end}}
+  <label>Setup-токен
+    <input name="token" autocomplete="off" autocapitalize="none" spellcheck="false" required autofocus value="{{.Form.token}}">
+  </label>
+  <label>Логин
+    <input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required value="{{.Form.username}}">
+  </label>
+  <label><span>Пароль <span class="muted">(от {{.Data.MinPassword}} символов)</span></span>
+    <input name="password" type="password" autocomplete="new-password" minlength="{{.Data.MinPassword}}" required>
+  </label>
+  <label>Пароль ещё раз
+    <input name="password2" type="password" autocomplete="new-password" minlength="{{.Data.MinPassword}}" required>
+  </label>
+  <button class="primary" type="submit">Создать и войти</button>
+</form>
+{{end}}

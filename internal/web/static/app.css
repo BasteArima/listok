@@ -1,0 +1,86 @@
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --text: #1b1f24;
+  --muted: #5f6b7a;
+  --border: #d9dee5;
+  --accent: #2f6fde;
+  --accent-text: #ffffff;
+  --danger-bg: #fdecec;
+  --danger-text: #a12020;
+  --radius: 10px;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111418;
+    --surface: #1a1f25;
+    --text: #e6e9ed;
+    --muted: #8d98a6;
+    --border: #2c333c;
+    --accent: #5b8ff0;
+    --accent-text: #0d1117;
+    --danger-bg: #3a1a1c;
+    --danger-text: #ffb4b4;
+  }
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 var(--font);
+}
+code { font-family: var(--mono); font-size: .9em; }
+h1 { font-size: 1.4rem; margin: 0 0 .75rem; }
+
+.muted { color: var(--muted); }
+
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: .75rem 16px; border-bottom: 1px solid var(--border); background: var(--surface);
+}
+.topnav { display: flex; align-items: center; gap: 1rem; }
+.topnav form { margin: 0; }
+.brand { font-weight: 700; color: var(--text); text-decoration: none; letter-spacing: .02em; }
+.brand-lg { font-size: 1.8rem; text-align: center; margin-bottom: 1rem; }
+
+.page { max-width: 960px; margin: 0 auto; padding: 16px; }
+.center { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+}
+.auth { width: 100%; max-width: 380px; display: grid; gap: .9rem; }
+
+label { display: grid; gap: .3rem; font-size: .95rem; }
+input {
+  width: 100%;
+  font: inherit;
+  padding: .6rem .7rem;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+button { font: inherit; cursor: pointer; }
+button.primary {
+  padding: .65rem 1rem;
+  border: 0; border-radius: 8px;
+  background: var(--accent); color: var(--accent-text);
+  font-weight: 600;
+}
+button.link { border: 0; background: none; color: var(--accent); padding: 0; }
+
+.alert {
+  margin: 0; padding: .6rem .75rem; border-radius: 8px;
+  background: var(--danger-bg); color: var(--danger-text);
+}
