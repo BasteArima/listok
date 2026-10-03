@@ -1,0 +1,126 @@
+{{define "content"}}
+{{with .Data}}
+<section class="card">
+  <div class="list-head">
+    <div>
+      <h1>{{.Router.Name}}</h1>
+      {{if .Router.Notes}}<p class="muted">{{.Router.Notes}}</p>{{end}}
+    </div>
+    <div class="stats muted small">
+      <div>владелец {{.Router.OwnerName}}</div>
+      <div>последний опрос: {{with .Router.LastFetchAt}}{{ago .}}{{else}}не было{{end}}</div>
+    </div>
+  </div>
+  {{with $.Error}}{{template "form-error" .}}{{end}}
+  <details class="edit">
+    <summary>Изменить или удалить</summary>
+    <form class="form-grid" method="post" action="/routers/{{.Router.ID}}">
+      <label>Название <input name="name" required maxlength="60" value="{{.Router.Name}}"></label>
+      <label>Заметки <input name="notes" maxlength="500" value="{{.Router.Notes}}"></label>
+      <div><button class="primary" type="submit">Сохранить</button></div>
+    </form>
+    <form method="post" action="/routers/{{.Router.ID}}/delete" hx-post="/routers/{{.Router.ID}}/delete"
+      hx-confirm="Удалить роутер «{{.Router.Name}}» и все его фиды? Ссылки перестанут работать сразу.">
+      <button class="small-btn danger" type="submit">Удалить роутер</button>
+    </form>
+  </details>
+</section>
+
+{{$lists := .Lists}}
+{{range .Feeds}}
+<section class="card feed" id="feed-{{.ID}}">
+  <div class="list-head">
+    <div>
+      <h2>Секция <span class="mono">{{.Section}}</span> {{if not .Enabled}}<span class="badge">выключен</span>{{end}}</h2>
+      <div class="small">
+        {{if eq .Status "fresh"}}<span class="plus">● забрал актуальную версию</span>
+        {{else if eq .Status "stale"}}<span class="warn">● забрал устаревшую версию</span>
+        {{else}}<span class="muted">● ещё не забирал</span>{{end}}
+        {{with .LastFetchAt}}<span class="muted">· {{ago .}}</span>{{end}}
+      </div>
+    </div>
+    <div class="stats muted small">
+      <div><b>{{.Current.Entries}}</b> записей в фиде</div>
+      <div>версия <span class="mono">{{.Current.ETag}}</span></div>
+    </div>
+  </div>
+
+  <label>Ссылка для forkop (секретная: кто её знает, видит содержимое)
+    <div class="copy-row">
+      <input class="mono" readonly value="{{.URL}}" id="url-{{.ID}}">
+      <button class="small-btn" type="button" data-copy="url-{{.ID}}">Копировать</button>
+    </div>
+  </label>
+
+  <form class="feed-lists" method="post" action="/feeds/{{.ID}}/lists">
+    <div class="small muted">Списки в фиде:</div>
+    <div class="checks">
+      {{$set := .ListSet}}
+      {{range $lists}}<label class="inline"><input type="checkbox" name="list" value="{{.ID}}" {{if index $set .ID}}checked{{end}}> {{.Title}} <span class="muted small">({{.EnabledCount}})</span></label>{{end}}
+    </div>
+    <button class="small-btn" type="submit">Сохранить состав</button>
+  </form>
+
+  <div class="feed-actions">
+    <form method="post" action="/feeds/{{.ID}}/toggle">
+      <input type="hidden" name="enabled" value="{{if .Enabled}}0{{else}}1{{end}}">
+      <button class="small-btn" type="submit">{{if .Enabled}}Выключить фид{{else}}Включить фид{{end}}</button>
+    </form>
+    <form method="post" action="/feeds/{{.ID}}/regenerate" hx-post="/feeds/{{.ID}}/regenerate"
+      hx-confirm="Выпустить новую ссылку? Старая перестанет работать сразу — её нужно будет заменить в forkop.">
+      <button class="small-btn" type="submit">Новая ссылка</button>
+    </form>
+    <form method="post" action="/feeds/{{.ID}}/delete" hx-post="/feeds/{{.ID}}/delete"
+      hx-confirm="Удалить фид секции {{.Section}}? Ссылка перестанет работать.">
+      <button class="small-btn danger" type="submit">Удалить фид</button>
+    </form>
+  </div>
+
+  {{if .Fetches}}
+  <details>
+    <summary class="small">Журнал опросов ({{len .Fetches}} последних)</summary>
+    <div class="table-wrap">
+    <table class="small">
+      <thead><tr><th>Когда</th><th>IP</th><th>Ответ</th><th>Версия</th></tr></thead>
+      <tbody>
+      {{$cur := .Current.ETag}}
+      {{range .Fetches}}
+        <tr><td>{{ago .At}}</td><td class="mono">{{.IP}}</td><td>{{if eq .Status 304}}без изменений{{else}}скачал{{end}}</td>
+          <td class="mono">{{.ETag}}{{if eq .ETag $cur}} <span class="plus">✓</span>{{end}}</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+    </div>
+  </details>
+  {{end}}
+</section>
+{{end}}
+
+<section class="card">
+  <h2>Новый фид</h2>
+  <p class="muted small">Фид — это один <code>.lst</code> для одной секции forkop (обычно <code>main</code>; для отдельного выхода — например, <code>geo</code>). В него войдут включённые записи отмеченных списков.</p>
+  <form class="feed-lists" method="post" action="/routers/{{.Router.ID}}/feeds">
+    <label class="inline">Секция
+      <input name="section" required maxlength="32" pattern="[A-Za-z0-9_]+" value="{{or ($.Form.section) "main"}}" list="sections" class="section-input" autocapitalize="none" spellcheck="false">
+      <datalist id="sections"><option value="main"><option value="geo"></datalist>
+    </label>
+    {{if .Lists}}
+    <div class="checks">
+      {{range .Lists}}<label class="inline"><input type="checkbox" name="list" value="{{.ID}}"> {{.Title}} <span class="muted small">({{.EnabledCount}})</span></label>{{end}}
+    </div>
+    {{else}}<p class="muted small">Видимых списков нет — фид будет пустым (только служебная запись).</p>{{end}}
+    <div><button class="primary" type="submit">Создать фид</button></div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Как подключить к forkop</h2>
+  <ol class="small">
+    <li>LuCI → forkop → нужная секция → <b>Domain and IP lists</b> → вставить ссылку фида → сохранить.</li>
+    <li>forkop перезапустится один раз и скачает список. Дальше он обновляет его сам раз в сутки (<code>update_interval</code>), без перезапуска sing-box.</li>
+    <li>Первая строка фида — служебная <code>listok-sentinel.invalid</code>: она нужна, чтобы новые записи подхватывались без рестарта.</li>
+  </ol>
+  <p class="warn small">Пока нет агента: после перезагрузки роутера список по URL может не подхватиться до повторного перезапуска forkop (гонка при старте). Агент listok уберёт и это, и суточную задержку.</p>
+</section>
+{{end}}
+{{end}}

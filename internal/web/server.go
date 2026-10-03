@@ -15,6 +15,7 @@ import (
 	"github.com/BasteArima/listok/internal/auth"
 	"github.com/BasteArima/listok/internal/config"
 	"github.com/BasteArima/listok/internal/lists"
+	"github.com/BasteArima/listok/internal/routers"
 	"github.com/BasteArima/listok/internal/store"
 )
 
@@ -22,12 +23,13 @@ import (
 var assets embed.FS
 
 type Deps struct {
-	DB     *sql.DB
-	Store  *store.Store
-	Auth   *auth.Service
-	Lists  *lists.Service
-	Config config.Config
-	Log    *slog.Logger
+	DB      *sql.DB
+	Store   *store.Store
+	Auth    *auth.Service
+	Lists   *lists.Service
+	Routers *routers.Service
+	Config  config.Config
+	Log     *slog.Logger
 }
 
 type Server struct {
@@ -54,6 +56,7 @@ func New(d Deps) (*Server, error) {
 	staticFS, _ := fs.Sub(assets, "static")
 	mux.Handle("GET /static/", http.StripPrefix("/static/", cacheStatic(http.FileServerFS(staticFS))))
 	mux.HandleFunc("GET /healthz", s.healthz)
+	mux.HandleFunc("GET /f/{file}", s.serveFeed)
 
 	mux.HandleFunc("GET /setup", s.setupForm)
 	mux.HandleFunc("POST /setup", s.setupSubmit)
@@ -78,6 +81,24 @@ func New(d Deps) (*Server, error) {
 	authed("GET /lists/{slug}/history/more", s.historyMore)
 	authed("GET /lists/{slug}/history/{version}", s.historyVersion)
 	authed("POST /lists/{slug}/rollback/{version}", s.rollback)
+	authed("GET /routers", s.routersPage)
+	authed("POST /routers", s.createRouter)
+	authed("GET /routers/{id}", s.routerPage)
+	authed("POST /routers/{id}", s.updateRouter)
+	authed("POST /routers/{id}/delete", s.deleteRouter)
+	authed("POST /routers/{id}/feeds", s.createFeed)
+	authed("POST /feeds/{id}/lists", s.feedAction(func(r *http.Request, u store.User, id int64) (int64, error) {
+		return s.Routers.SetFeedLists(r.Context(), u, id, listIDsFrom(r))
+	}))
+	authed("POST /feeds/{id}/toggle", s.feedAction(func(r *http.Request, u store.User, id int64) (int64, error) {
+		return s.Routers.SetFeedEnabled(r.Context(), u, id, r.PostFormValue("enabled") == "1")
+	}))
+	authed("POST /feeds/{id}/regenerate", s.feedAction(func(r *http.Request, u store.User, id int64) (int64, error) {
+		return s.Routers.RegenerateToken(r.Context(), u, id)
+	}))
+	authed("POST /feeds/{id}/delete", s.feedAction(func(r *http.Request, u store.User, id int64) (int64, error) {
+		return s.Routers.DeleteFeed(r.Context(), u, id)
+	}))
 
 	// Защита от CSRF: браузерные запросы с изменением состояния только с того же origin.
 	cop := http.NewCrossOriginProtection()

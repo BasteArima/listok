@@ -6,7 +6,7 @@
 
 | Метод | Путь | Что делает |
 |---|---|---|
-| GET | `/f/{token}.lst` | Содержимое фида. `If-None-Match` → 304. `?wait=N` включает long-poll (см. `feeds.md`). |
+| GET | `/f/{token}.lst` | Содержимое фида, `text/plain`. `ETag` + `If-None-Match` → 304. Каждый запрос пишется в журнал опросов. `?wait=N` (long-poll) — этап 2, ещё не сделан. |
 | GET | `/install/{token}` | sh-установщик агента. Одноразовый, живёт 24 ч. |
 | GET | `/agent/listok-agent.uc` | Текущая версия агента, для самообновления. |
 
@@ -59,9 +59,13 @@
 | `GET/POST /lists/{slug}/members` | Права |
 | `GET /proposals`, `GET /proposals/{id}` | Предложения |
 | `POST /proposals`, `POST /proposals/{id}/decide` | Создать / решить (всё или по строкам) |
-| `GET /routers`, `GET /routers/{id}` | Роутеры, фиды, журнал опросов |
-| `POST /routers/{id}/install-token` | Выдать ссылку установки |
-| `POST /feeds/{id}/regenerate` | Перевыпустить токен фида |
+| `GET /routers`, `POST /routers` | Роутеры пользователя (админ видит все), создание |
+| `GET /routers/{id}`, `POST /routers/{id}`, `POST /routers/{id}/delete` | Карточка роутера: фиды со статусом, ссылками и журналом; правка; удаление |
+| `POST /routers/{id}/feeds` | Новый фид: `section` + `list` (несколько) |
+| `POST /feeds/{id}/lists` | `toggle` | `regenerate` | `delete` | Состав, вкл/выкл, новая ссылка (старая сразу 404), удаление |
+| `POST /routers/{id}/install-token` | Выдать ссылку установки агента (этап 2) |
+
+Действия с подтверждением (`hx-confirm`) приходят от htmx и получают 204 + `HX-Redirect`, обычные формы — 303.
 | `GET /suggestions` | Подсказки из clash API: добавить / скрыть / игнорировать шаблон |
 | `GET /check?q=` | «Покрыт ли» |
 | `GET /events` | SSE: статусы роутеров, новые предложения, применение фида |

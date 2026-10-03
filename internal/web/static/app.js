@@ -16,6 +16,24 @@
     toast(messages[xhr.status] || "Ошибка сервера (" + xhr.status + ")");
     if (xhr.status === 401) window.location.href = "/login?next=" + encodeURIComponent(location.pathname);
   });
+  // Кнопки «Копировать»: data-copy = id поля с текстом.
+  document.addEventListener("click", function (e) {
+    const btn = e.target.closest("[data-copy]");
+    if (!btn) return;
+    const field = document.getElementById(btn.dataset.copy);
+    if (!field) return;
+    const done = function () {
+      const old = btn.textContent;
+      btn.textContent = "Скопировано";
+      setTimeout(function () { btn.textContent = old; }, 1500);
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(field.value).then(done, function () { field.select(); });
+    } else {
+      field.select();
+      try { document.execCommand("copy"); done(); } catch (_) {}
+    }
+  });
   document.addEventListener("htmx:sendError", function () {
     toast("Нет связи с сервером");
   });

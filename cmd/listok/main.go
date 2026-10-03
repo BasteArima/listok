@@ -15,7 +15,9 @@ import (
 	"github.com/BasteArima/listok/internal/auth"
 	"github.com/BasteArima/listok/internal/config"
 	"github.com/BasteArima/listok/internal/db"
+	"github.com/BasteArima/listok/internal/feed"
 	"github.com/BasteArima/listok/internal/lists"
+	"github.com/BasteArima/listok/internal/routers"
 	"github.com/BasteArima/listok/internal/store"
 	"github.com/BasteArima/listok/internal/web"
 )
@@ -65,7 +67,7 @@ func run(log *slog.Logger) error {
 		// Единственное место, где токен печатается целиком: в этом его смысл. Живёт до рестарта.
 		log.Warn("пользователей нет: откройте /setup и введите setup-токен", "setup_token", setupToken)
 	}
-	go cleanupSessions(ctx, st, log)
+	go cleanup(ctx, st, log)
 
 	listsSvc := lists.New(st, log, nil)
 	n, err := listsSvc.LoadIndex(ctx)
@@ -74,7 +76,9 @@ func run(log *slog.Logger) error {
 	}
 	log.Info("индекс покрытия загружен", "entries", n)
 
-	handler, err := web.New(web.Deps{DB: conn, Store: st, Auth: authSvc, Lists: listsSvc, Config: cfg, Log: log})
+	routerSvc := routers.New(st, feed.NewBuilder(st), nil)
+
+	handler, err := web.New(web.Deps{DB: conn, Store: st, Auth: authSvc, Lists: listsSvc, Routers: routerSvc, Config: cfg, Log: log})
 	if err != nil {
 		return err
 	}
@@ -109,8 +113,8 @@ func run(log *slog.Logger) error {
 	return nil
 }
 
-// cleanupSessions раз в час удаляет просроченные сессии. Позже переедет в internal/jobs.
-func cleanupSessions(ctx context.Context, st *store.Store, log *slog.Logger) {
+// cleanup раз в час удаляет просроченные сессии и журнал опросов старше 30 дней. Позже переедет в internal/jobs.
+func cleanup(ctx context.Context, st *store.Store, log *slog.Logger) {
 	t := time.NewTicker(time.Hour)
 	defer t.Stop()
 	for {
@@ -122,6 +126,11 @@ func cleanupSessions(ctx context.Context, st *store.Store, log *slog.Logger) {
 				log.Warn("чистка сессий", "err", err)
 			} else if n > 0 {
 				log.Info("удалены просроченные сессии", "count", n)
+			}
+			if n, err := st.DeleteOldFetches(ctx, time.Now().Add(-30*24*time.Hour)); err != nil {
+				log.Warn("чистка журнала опросов", "err", err)
+			} else if n > 0 {
+				log.Info("удалены старые записи журнала опросов", "count", n)
 			}
 		}
 	}

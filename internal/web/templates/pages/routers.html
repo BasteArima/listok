@@ -1,0 +1,38 @@
+{{define "content"}}
+{{with .Data}}
+<section class="card">
+  <h1>Роутеры</h1>
+  {{if .Routers}}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Название</th>{{if .IsAdmin}}<th>Владелец</th>{{end}}<th>Фидов</th><th>Последний опрос</th></tr></thead>
+    <tbody>
+    {{range .Routers}}
+      <tr>
+        <td><a href="/routers/{{.ID}}">{{.Name}}</a>{{if .Notes}}<div class="muted small">{{.Notes}}</div>{{end}}</td>
+        {{if $.Data.IsAdmin}}<td>{{.OwnerName}}</td>{{end}}
+        <td>{{.FeedCount}}</td>
+        <td class="muted small">{{with .LastFetchAt}}{{ago .}}{{else}}ещё не опрашивал{{end}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{else}}<p class="muted">Роутеров пока нет. Добавьте роутер, затем создайте для него фид и вставьте ссылку в forkop.</p>{{end}}
+</section>
+
+<section class="card">
+  <h2>Новый роутер</h2>
+  {{with $.Error}}{{template "form-error" .}}{{end}}
+  <form class="form-grid" method="post" action="/routers">
+    <label>Название
+      <input name="name" required maxlength="60" value="{{$.Form.name}}" placeholder="дом">
+    </label>
+    <label>Заметки
+      <input name="notes" maxlength="500" value="{{$.Form.notes}}" placeholder="NanoPi R3S, FriendlyWrt">
+    </label>
+    <div><button class="primary" type="submit">Добавить</button></div>
+  </form>
+</section>
+{{end}}
+{{end}}
