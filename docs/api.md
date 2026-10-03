@@ -45,8 +45,12 @@
 | `GET /login`, `POST /login`, `POST /logout` | Вход. Ограничение частоты: 5 неудачных попыток за 15 мин на IP+логин, дальше пауза с ростом |
 | `GET /` | Главная: быстрое добавление, последние изменения, статус роутеров, входящие предложения |
 | `GET /lists`, `POST /lists` | Списки |
-| `GET /lists/{slug}` | Записи, поиск, фильтры |
-| `POST /lists/{slug}/entries` | Добавить (одну или пачку) |
+| `POST /preview` | Живой разбор ввода (`input`, `list`, `exact`) → фрагмент `preview`. Ничего не пишет |
+| `POST /quick` | Быстрое добавление с главной → итог + OOB: очистка поля, лента изменений. Запоминает список в cookie `listok_last_list` |
+| `GET /lists/{slug}` | Записи, поиск, фильтры (`q`, `kind` = domain/cidr) |
+| `GET /lists/{slug}/rows` | Только `<tbody id="rows">` для поиска |
+| `POST /lists/{slug}/entries` | Добавить пачку → итог + OOB: таблица (в `<template>`), счётчики |
+| `GET /lists/{slug}/entries/{id}/row`, `…/edit` | Строка таблицы в режиме просмотра / правки комментария |
 | `PATCH /lists/{slug}/entries/{id}` | Комментарий, вкл/выкл, срок |
 | `DELETE /lists/{slug}/entries/{id}` | Удалить |
 | `GET /lists/{slug}/history`, `GET /lists/{slug}/history/{v}` | История и diff |
@@ -62,3 +66,5 @@
 | `GET /events` | SSE: статусы роутеров, новые предложения, применение фида |
 | `GET /settings`, `/settings/tokens`, `/users` | Настройки, API-токены, пользователи (админ) |
 | `GET /share?url=&text=` | Цель Web Share Target из PWA → форма быстрого добавления |
+
+Ошибки для htmx: 401 без сессии (app.js уводит на `/login`), 403 нет прав, 404 не найдено или не видно, 422 ошибка валидации (фрагмент с сообщением вставляется). Остальные коды показывает всплывашка из `app.js`.

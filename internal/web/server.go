@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"html/template"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/BasteArima/listok/internal/auth"
 	"github.com/BasteArima/listok/internal/config"
+	"github.com/BasteArima/listok/internal/lists"
 	"github.com/BasteArima/listok/internal/store"
 )
 
@@ -23,6 +25,7 @@ type Deps struct {
 	DB     *sql.DB
 	Store  *store.Store
 	Auth   *auth.Service
+	Lists  *lists.Service
 	Config config.Config
 	Log    *slog.Logger
 }
@@ -30,18 +33,20 @@ type Deps struct {
 type Server struct {
 	Deps
 	pages        map[string]*pageTemplate
+	partials     *template.Template
 	secureCookie bool
 	handler      http.Handler
 }
 
 func New(d Deps) (*Server, error) {
-	pages, err := loadPages()
+	pages, partials, err := loadPages()
 	if err != nil {
 		return nil, err
 	}
 	s := &Server{
 		Deps:         d,
 		pages:        pages,
+		partials:     partials,
 		secureCookie: strings.HasPrefix(d.Config.BaseURL, "https://"),
 	}
 
@@ -56,7 +61,19 @@ func New(d Deps) (*Server, error) {
 	mux.HandleFunc("POST /login", s.loginSubmit)
 	mux.HandleFunc("POST /logout", s.logout)
 
-	mux.Handle("GET /{$}", s.requireUser(http.HandlerFunc(s.home)))
+	authed := func(pattern string, h http.HandlerFunc) { mux.Handle(pattern, s.requireUser(h)) }
+	authed("GET /{$}", s.home)
+	authed("POST /preview", s.preview)
+	authed("POST /quick", s.quick)
+	authed("GET /lists", s.listsPage)
+	authed("POST /lists", s.createList)
+	authed("GET /lists/{slug}", s.listPage)
+	authed("GET /lists/{slug}/rows", s.listRows)
+	authed("POST /lists/{slug}/entries", s.addEntries)
+	authed("PATCH /lists/{slug}/entries/{id}", s.patchEntry)
+	authed("DELETE /lists/{slug}/entries/{id}", s.deleteEntry)
+	authed("GET /lists/{slug}/entries/{id}/row", s.entryRow(false))
+	authed("GET /lists/{slug}/entries/{id}/edit", s.entryRow(true))
 
 	// Защита от CSRF: браузерные запросы с изменением состояния только с того же origin.
 	cop := http.NewCrossOriginProtection()
@@ -87,14 +104,14 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("ok\n"))
 }
 
-func (s *Server) home(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, http.StatusOK, "home", page{Title: "Списки"})
-}
-
 func cacheStatic(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Без хешей в именах файлов: кешируем ненадолго, чтобы обновления доезжали за час.
-		w.Header().Set("Cache-Control", "public, max-age=3600")
+		// Ссылки из шаблонов содержат ?v=<хеш статики>, поэтому кешировать можно сколько угодно.
+		if r.URL.Query().Get("v") != "" {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
 		h.ServeHTTP(w, r)
 	})
 }

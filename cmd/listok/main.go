@@ -15,6 +15,7 @@ import (
 	"github.com/BasteArima/listok/internal/auth"
 	"github.com/BasteArima/listok/internal/config"
 	"github.com/BasteArima/listok/internal/db"
+	"github.com/BasteArima/listok/internal/lists"
 	"github.com/BasteArima/listok/internal/store"
 	"github.com/BasteArima/listok/internal/web"
 )
@@ -66,7 +67,14 @@ func run(log *slog.Logger) error {
 	}
 	go cleanupSessions(ctx, st, log)
 
-	handler, err := web.New(web.Deps{DB: conn, Store: st, Auth: authSvc, Config: cfg, Log: log})
+	listsSvc := lists.New(st, log, nil)
+	n, err := listsSvc.LoadIndex(ctx)
+	if err != nil {
+		return err
+	}
+	log.Info("индекс покрытия загружен", "entries", n)
+
+	handler, err := web.New(web.Deps{DB: conn, Store: st, Auth: authSvc, Lists: listsSvc, Config: cfg, Log: log})
 	if err != nil {
 		return err
 	}

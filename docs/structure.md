@@ -13,6 +13,7 @@ listok/
 │   │   └── db.go                # открытие SQLite, PRAGMA, WAL
 │   ├── store/                   # доступ к данным: по файлу на агрегат (lists.go, entries.go, ...)
 │   ├── entry/                   # нормализация и классификация ввода, проверка покрытия
+│   ├── lists/                   # сервис списков: права (CanEdit), предпросмотр, добавление, правка; держит entry.Index
 │   ├── feed/                    # сборка содержимого фида, ETag, Notifier (long-poll)
 │   ├── history/                 # версии, diff, откат
 │   ├── proposal/                # предложения и их принятие
@@ -23,7 +24,7 @@ listok/
 │   ├── web/                     # htmx-обработчики, шаблоны, статика
 │   │   ├── handlers_*.go
 │   │   ├── templates/           # layout.html, pages/*.html, partials/*.html
-│   │   └── static/              # htmx.min.js, alpine.min.js, app.css, manifest.webmanifest, sw.js
+│   │   └── static/              # htmx.min.js (2.0.11), app.js, app.css, favicon.svg; позже manifest.webmanifest, sw.js
 │   └── api/                     # JSON API /api/v1 и /agent/v1, отдача фидов /f/
 ├── agent/
 │   ├── listok-agent.uc          # агент на роутере (ucode)

@@ -17,6 +17,7 @@ import (
 	"github.com/BasteArima/listok/internal/auth"
 	"github.com/BasteArima/listok/internal/config"
 	"github.com/BasteArima/listok/internal/db"
+	"github.com/BasteArima/listok/internal/lists"
 	"github.com/BasteArima/listok/internal/store"
 )
 
@@ -30,6 +31,7 @@ type env struct {
 	ts         *httptest.Server
 	client     *http.Client
 	setupToken string
+	lists      *lists.Service
 }
 
 func newEnv(t *testing.T, adminUser, adminPass string) *env {
@@ -57,7 +59,8 @@ func newEnv(t *testing.T, adminUser, adminPass string) *env {
 	t.Cleanup(e.ts.Close)
 
 	cfg := config.Config{BaseURL: e.ts.URL, TrustedProxy: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}}
-	e.srv, err = New(Deps{DB: conn, Store: st, Auth: a, Config: cfg, Log: log})
+	e.lists = lists.New(st, log, nil)
+	e.srv, err = New(Deps{DB: conn, Store: st, Auth: a, Lists: e.lists, Config: cfg, Log: log})
 	if err != nil {
 		t.Fatal(err)
 	}

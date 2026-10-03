@@ -75,6 +75,11 @@ func (s *Server) loadUser(h http.Handler) http.Handler {
 func (s *Server) requireUser(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if userFrom(r.Context()) == nil {
+			if r.Header.Get("HX-Request") == "true" {
+				// htmx не должен вставлять страницу входа во фрагмент: app.js по 401 сам уведёт на /login.
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
 			http.Redirect(w, r, "/login?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusSeeOther)
 			return
 		}

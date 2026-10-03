@@ -1,6 +1,46 @@
 {{define "content"}}
-<section class="card">
-  <h1>Списки</h1>
-  <p class="muted">Здесь появятся быстрое добавление, списки и статус роутеров (этап 1, шаг 4).</p>
+{{with .Data}}
+<section class="card quick">
+  {{if .Editable}}
+  <div hx-post="/preview" hx-trigger="input delay:300ms, change" hx-include="#quick" hx-target="#preview">
+    <form id="quick" hx-post="/quick" hx-target="#quick-result">
+      <div class="quick-row">
+        {{template "quick-input" ""}}
+        <button class="primary" type="submit">Добавить</button>
+      </div>
+      <div class="quick-opts">
+        <label class="inline">в
+          <select name="list">
+            {{range .Editable}}<option value="{{.ID}}" {{if eq .ID $.Data.LastList}}selected{{end}}>{{.Title}}</option>{{end}}
+          </select>
+        </label>
+        <label class="inline"><input type="checkbox" name="exact" value="1"> только этот хост</label>
+        <input class="comment" name="comment" placeholder="комментарий (необязательно)" maxlength="200" autocomplete="off">
+      </div>
+    </form>
+  </div>
+  <div id="preview" class="preview"></div>
+  <div id="quick-result"></div>
+  {{else}}
+  <p>Пока нет списков, куда можно добавлять. <a href="/lists">Создайте первый список</a>.</p>
+  {{end}}
 </section>
+
+<div class="grid2">
+  <section class="card">
+    <h2>Списки</h2>
+    {{if .Lists}}
+    <ul class="plain">
+      {{range .Lists}}
+      <li><a href="/lists/{{.Slug}}">{{.Title}}</a> <span class="muted small">{{.EnabledCount}}{{if ne .EnabledCount .EntryCount}} из {{.EntryCount}}{{end}} · {{roleLabel .Role}}</span></li>
+      {{end}}
+    </ul>
+    {{else}}<p class="muted">Списков нет.</p>{{end}}
+  </section>
+  <section class="card">
+    <h2>Последние изменения</h2>
+    {{template "recent" .Recent}}
+  </section>
+</div>
+{{end}}
 {{end}}

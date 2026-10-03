@@ -1,0 +1,36 @@
+{{define "rows"}}{{if .OOB}}<template>{{end}}{{/* tbody вне <table> парсер выкидывает: для out-of-band htmx 2 требует обёртку <template> */}}<tbody id="rows"{{if .OOB}} hx-swap-oob="true"{{end}}>
+{{range .Rows}}{{template "row" .}}{{else}}
+<tr><td colspan="5" class="muted">{{if .Filtered}}Ничего не найдено.{{else}}Записей пока нет.{{end}}</td></tr>
+{{end}}
+{{if .Truncated}}<tr><td colspan="5" class="muted small">Показаны первые {{len .Rows}}. Уточните поиск.</td></tr>{{end}}
+</tbody>{{if .OOB}}</template>{{end}}{{end}}
+
+{{define "row"}}<tr id="entry-{{.E.ID}}" class="{{if not .E.Enabled}}off{{end}}">
+  <td class="mono value">{{.E.Value}}</td>
+  <td><span class="badge">{{kindLabel .E.Kind}}</span></td>
+  <td class="comment-cell">{{.E.Comment}}</td>
+  <td class="muted small meta">{{if .E.AddedByName}}{{.E.AddedByName}} · {{end}}{{ago .E.CreatedAt}}</td>
+  <td class="actions">
+    {{if .CanEdit}}
+    <button class="small-btn" title="{{if .E.Enabled}}Выключить{{else}}Включить{{end}}"
+      hx-patch="/lists/{{.Slug}}/entries/{{.E.ID}}" hx-vals='{"enabled":"{{if .E.Enabled}}0{{else}}1{{end}}"}'
+      hx-target="closest tr" hx-swap="outerHTML">{{if .E.Enabled}}вкл{{else}}выкл{{end}}</button>
+    <button class="small-btn" title="Комментарий" hx-get="/lists/{{.Slug}}/entries/{{.E.ID}}/edit" hx-target="closest tr" hx-swap="outerHTML">✎</button>
+    <button class="small-btn danger" title="Удалить" hx-delete="/lists/{{.Slug}}/entries/{{.E.ID}}"
+      hx-confirm="Удалить {{.E.Value}}?" hx-target="closest tr" hx-swap="outerHTML">✕</button>
+    {{end}}
+  </td>
+</tr>{{end}}
+
+{{define "row-edit"}}<tr id="entry-{{.E.ID}}" class="editing">
+  <td class="mono value">{{.E.Value}}</td>
+  <td><span class="badge">{{kindLabel .E.Kind}}</span></td>
+  <td colspan="3">
+    <form class="inline-form" hx-patch="/lists/{{.Slug}}/entries/{{.E.ID}}" hx-target="closest tr" hx-swap="outerHTML">
+      <input name="comment" value="{{.E.Comment}}" maxlength="200" placeholder="комментарий" autofocus>
+      <button class="small-btn" type="submit">Сохранить</button>
+      <button class="small-btn" type="button" hx-get="/lists/{{.Slug}}/entries/{{.E.ID}}/row" hx-target="closest tr" hx-swap="outerHTML">Отмена</button>
+      {{with .Error}}<span class="warn small">{{.}}</span>{{end}}
+    </form>
+  </td>
+</tr>{{end}}

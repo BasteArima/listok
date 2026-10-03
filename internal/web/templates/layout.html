@@ -4,14 +4,21 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
+{{/* allowEval выключен под CSP без unsafe-eval; стили индикаторов — в app.css; 422 = ошибка валидации, её показываем. */}}
+<meta name="htmx-config" content='{"allowEval":false,"includeIndicatorStyles":false,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"422","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
 <title>{{if .Title}}{{.Title}} · {{end}}listok</title>
-<link rel="stylesheet" href="/static/app.css">
-<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="{{static "app.css"}}">
+<link rel="icon" href="{{static "favicon.svg"}}" type="image/svg+xml">
+<script src="{{static "htmx.min.js"}}" defer></script>
+<script src="{{static "app.js"}}" defer></script>
 </head>
 <body>
 {{if .User}}
 <header class="topbar">
-  <a class="brand" href="/">listok</a>
+  <nav class="topnav">
+    <a class="brand" href="/">listok</a>
+    <a href="/lists">Списки</a>
+  </nav>
   <nav class="topnav">
     <span class="muted">{{.User.Username}}</span>
     <form method="post" action="/logout"><button class="link" type="submit">Выйти</button></form>
@@ -21,5 +28,6 @@
 <main class="{{if .User}}page{{else}}center{{end}}">
 {{template "content" .}}
 </main>
+<div id="toast" class="toast" role="status" hidden></div>
 </body>
 </html>{{end}}

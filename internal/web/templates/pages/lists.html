@@ -1,0 +1,42 @@
+{{define "content"}}
+{{with .Data}}
+<section class="card">
+  <h1>Списки</h1>
+  {{if .Lists}}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Название</th><th>Записей</th><th>Владелец</th><th>Ваша роль</th><th class="meta">Изменён</th></tr></thead>
+    <tbody>
+    {{range .Lists}}
+      <tr>
+        <td><a href="/lists/{{.Slug}}">{{.Title}}</a>{{if .Description}}<div class="muted small">{{.Description}}</div>{{end}}</td>
+        <td>{{.EnabledCount}}{{if ne .EnabledCount .EntryCount}} <span class="muted small">из {{.EntryCount}}</span>{{end}}</td>
+        <td>{{.OwnerName}}</td>
+        <td>{{roleLabel .Role}}</td>
+        <td class="muted small meta">{{ago .UpdatedAt}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{else}}<p class="muted">Списков пока нет.</p>{{end}}
+</section>
+
+<section class="card">
+  <h2>Новый список</h2>
+  {{with $.Error}}{{template "form-error" .}}{{end}}
+  <form class="form-grid" method="post" action="/lists">
+    <label>Название
+      <input name="title" required maxlength="80" value="{{$.Form.title}}" placeholder="Общий">
+    </label>
+    <label>Адрес <span class="muted small">(для ссылок: латиница, цифры, дефис)</span>
+      <input name="slug" required maxlength="40" pattern="[a-z0-9][a-z0-9\-]*" value="{{$.Form.slug}}" placeholder="common" autocapitalize="none" spellcheck="false">
+    </label>
+    <label class="wide">Описание
+      <input name="description" maxlength="200" value="{{$.Form.description}}" placeholder="необязательно">
+    </label>
+    <div><button class="primary" type="submit">Создать</button></div>
+  </form>
+</section>
+{{end}}
+{{end}}

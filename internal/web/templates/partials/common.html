@@ -1,0 +1,60 @@
+{{define "quick-input"}}<input id="quick-input" class="quick-input" name="input" type="text" placeholder="Домен, ссылка или IP" autocomplete="off" autocapitalize="none" spellcheck="false" autofocus required{{if .}} hx-swap-oob="true"{{end}}>{{end}}
+
+{{define "recent"}}<div id="recent">{{template "recent-body" .}}</div>{{end}}
+{{define "recent-oob"}}<div id="recent" hx-swap-oob="true">{{template "recent-body" .}}</div>{{end}}
+
+{{define "recent-body"}}
+{{if .}}
+<ul class="plain recent">
+  {{range .}}
+  <li>
+    <a href="/lists/{{.ListSlug}}">{{.ListTitle}}</a>
+    {{if .Added}}<span class="plus">+{{.Added}}</span>{{end}}{{if .Removed}} <span class="minus">−{{.Removed}}</span>{{end}}{{if .Updated}} <span class="muted">~{{.Updated}}</span>{{end}}
+    <span class="mono small">{{range $i, $v := .Sample}}{{if $i}}, {{end}}{{$v}}{{end}}{{if gt (add .Added .Removed .Updated) (len .Sample)}}…{{end}}</span>
+    <div class="muted small">{{if .Username}}{{.Username}}{{else}}система{{end}} · {{ago .CreatedAt}}</div>
+  </li>
+  {{end}}
+</ul>
+{{else}}<p class="muted">Изменений пока не было.</p>{{end}}
+{{end}}
+
+{{define "preview"}}
+{{if .}}
+<ul class="plain items">
+  {{range .}}{{template "item" .}}{{end}}
+</ul>
+{{end}}
+{{end}}
+
+{{define "item"}}
+<li class="item {{if not .OK}}bad{{else if .Status}}st-{{.Status}}{{end}}">
+  {{if .OK}}
+    {{if .Status}}<span class="status">{{statusLabel .Status}}</span>{{end}}
+    <span class="mono">{{.Entry.Value}}</span> <span class="badge">{{kindLabel (print .Entry.Kind)}}</span>
+    {{if .Host}}<span class="muted small">из {{.Host}}</span>{{end}}
+    {{range .Warnings}}<div class="warn small">{{warnLabel .}}</div>{{end}}
+    {{if .CoveredInTarget}}<div class="muted small">уже покрыто в этом списке</div>{{end}}
+    {{range .CoveredBy}}<div class="muted small">покрыто: <span class="mono">{{.Value}}</span> в <a href="/lists/{{.ListSlug}}">{{.ListTitle}}</a></div>{{end}}
+    {{with .Covers}}<div class="muted small">сделает лишними {{len .}}: {{range $i, $c := .}}{{if lt $i 3}}{{if $i}}, {{end}}<span class="mono">{{$c.Value}}</span>{{end}}{{end}}{{if gt (len .) 3}}…{{end}}</div>{{end}}
+  {{else}}
+    <span class="status">{{statusLabel "error"}}</span> <span class="mono">{{.Input}}</span> <span class="small">— {{.Err}}</span>
+  {{end}}
+</li>
+{{end}}
+
+{{define "add-result"}}
+<div class="result">
+  <p><b>{{.Summary}}</b></p>
+  <ul class="plain items">{{range .Items}}{{template "item" .}}{{end}}</ul>
+</div>
+{{end}}
+
+{{define "form-error"}}<p class="alert" role="alert">{{.}}</p>{{end}}
+
+{{define "list-stats"}}<div id="list-stats" class="stats muted small"{{if .OOB}} hx-swap-oob="true"{{end}}>
+  <div><b>{{.L.EnabledCount}}</b> включено{{if ne .L.EnabledCount .L.EntryCount}} из {{.L.EntryCount}}{{end}}</div>
+  <div>владелец {{.L.OwnerName}} · {{roleLabel .L.Role}}</div>
+  <div>версия {{.L.Version}}</div>
+</div>{{end}}
+
+{{define "oob-empty"}}<div id="{{.}}" class="preview" hx-swap-oob="true"></div>{{end}}

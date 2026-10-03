@@ -1,0 +1,46 @@
+{{define "content"}}
+{{with .Data}}
+<section class="card">
+  <div class="list-head">
+    <div>
+      <h1>{{.List.Title}}</h1>
+      {{if .List.Description}}<p class="muted">{{.List.Description}}</p>{{end}}
+    </div>
+    {{template "list-stats" (stats .List false)}}
+  </div>
+
+  {{if .CanEdit}}
+  <div hx-post="/preview" hx-trigger="input delay:400ms, change" hx-include="#add-form" hx-target="#add-preview">
+    <form id="add-form" class="add-form" hx-post="/lists/{{.List.Slug}}/entries" hx-target="#add-result">
+      <input type="hidden" name="list" value="{{.List.ID}}">
+      <textarea name="input" rows="3" placeholder="Домены, ссылки, IP и подсети — по одному на строку, через пробел или запятую" autocapitalize="none" spellcheck="false" required></textarea>
+      <div class="quick-opts">
+        <label class="inline"><input type="checkbox" name="exact" value="1"> только эти хосты</label>
+        <input class="comment" name="comment" placeholder="комментарий ко всем (необязательно)" maxlength="200" autocomplete="off">
+        <button class="primary" type="submit">Добавить</button>
+      </div>
+    </form>
+  </div>
+  <div id="add-preview" class="preview"></div>
+  <div id="add-result"></div>
+  {{end}}
+</section>
+
+<section class="card">
+  <form class="filters" hx-get="/lists/{{.List.Slug}}/rows" hx-trigger="input delay:250ms, change, search" hx-target="#rows" hx-swap="outerHTML">
+    <input type="search" name="q" value="{{.Query}}" placeholder="Поиск по значению или комментарию" autocomplete="off">
+    <select name="kind">
+      <option value="" {{if eq .Kind ""}}selected{{end}}>все</option>
+      <option value="domain" {{if eq .Kind "domain"}}selected{{end}}>домены</option>
+      <option value="cidr" {{if eq .Kind "cidr"}}selected{{end}}>подсети</option>
+    </select>
+  </form>
+  <div class="table-wrap">
+  <table class="entries">
+    <thead><tr><th>Значение</th><th>Тип</th><th>Комментарий</th><th class="meta">Добавил</th><th></th></tr></thead>
+    {{template "rows" .Rows}}
+  </table>
+  </div>
+</section>
+{{end}}
+{{end}}
