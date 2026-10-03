@@ -264,5 +264,5 @@ CREATE TABLE audit_log (
 );
 
 CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL);
+-- schema_migrations (version, applied_at) создаёт сам раннер миграций (internal/db/migrate.go), в 0001 её нет.
 ```
