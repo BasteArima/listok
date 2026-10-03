@@ -1,5 +1,5 @@
-# Стек Portainer на homesrv (docs/deploy.md).
-# network_mode: bridge — на homesrv исчерпан пул адресов Docker, свою сеть стек создать не сможет.
+# Пример стека Portainer за Nginx Proxy Manager (docs/deploy.md).
+# network_mode: bridge — на сервере автора исчерпан пул адресов Docker; если у вас его хватает, строку можно убрать.
 services:
   listok:
     image: ghcr.io/bastearima/listok:latest
@@ -10,7 +10,7 @@ services:
       # Только на docker0: NPM ходит на 172.17.0.1:8097, из LAN напрямую по http не достучаться.
       - "172.17.0.1:8097:8080"
     environment:
-      LISTOK_BASE_URL: https://listok.baste.ru
+      LISTOK_BASE_URL: https://listok.example.com   # заменить на свой домен
       # Откуда верить X-Forwarded-For: NPM приходит с адреса docker-сети (172.16.0.0/12).
       LISTOK_TRUSTED_PROXY: 172.16.0.0/12
       # Первый админ: либо раскомментировать (и потом убрать), либо взять setup-токен из логов.

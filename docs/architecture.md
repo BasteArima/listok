@@ -13,7 +13,7 @@
  │  remote-fetcher, jobs    │
  │  SQLite (WAL) /data      │
  └──────────────────────────┘
-        ▲ NPM (listok.<домен>), homesrv
+        ▲ NPM (listok.<домен>), домашний сервер
 ```
 
 ## Поток данных

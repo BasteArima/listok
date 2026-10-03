@@ -177,7 +177,7 @@ CREATE TABLE proposal_items (               -- для type='entries'
 ```sql
 CREATE TABLE routers (
   id                 INTEGER PRIMARY KEY,
-  name               TEXT NOT NULL,         -- 'дом', 'аул', 'товарищ'
+  name               TEXT NOT NULL,         -- 'дом', 'дача', 'офис'
   owner_id           INTEGER NOT NULL REFERENCES users(id),
   agent_token_hash   TEXT UNIQUE,           -- агент шлёт его в отчётах
   install_token_hash TEXT UNIQUE,           -- одноразовый, для /install/<token>

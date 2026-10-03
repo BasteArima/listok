@@ -33,7 +33,7 @@ listok/
 ├── .github/workflows/image.yml  # тесты + образ ghcr.io/bastearima/listok на push в main
 └── deploy/
     ├── Dockerfile               # multi-stage, итог: distroless/static-debian12:nonroot; healthcheck = /listok healthcheck
-    └── compose.yml              # стек Portainer на homesrv: network_mode bridge, 172.17.0.1:8097
+    └── compose.yml              # пример стека Portainer за NPM: network_mode bridge, 172.17.0.1:8097
 ```
 
 ## Правила слоёв
