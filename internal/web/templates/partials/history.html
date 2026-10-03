@@ -1,0 +1,65 @@
+{{define "list-tabs"}}<nav class="tabs">
+  <a href="/lists/{{.Slug}}"{{if eq .Active "entries"}} aria-current="page"{{end}}>Записи</a>
+  <a href="/lists/{{.Slug}}/history"{{if eq .Active "history"}} aria-current="page"{{end}}>История</a>
+</nav>{{end}}
+
+{{define "versions"}}
+{{$d := .}}
+{{range .Versions}}
+<li class="version" id="v{{.Version}}">
+  <div class="vhead">
+    <span class="vnum">v{{.Version}}</span>
+    <span>{{if .Username}}{{.Username}}{{else}}система{{end}}</span>
+    <span class="muted small">{{ago .CreatedAt}} · {{sourceLabel .Source}}{{if .Message}} · {{.Message}}{{end}}</span>
+    <span class="counts">{{if .Added}}<span class="plus">+{{.Added}}</span> {{end}}{{if .Removed}}<span class="minus">−{{.Removed}}</span> {{end}}{{if .Updated}}<span class="muted">~{{.Updated}}</span>{{end}}</span>
+    <span class="vactions">
+      <button class="small-btn" hx-get="/lists/{{$d.Slug}}/history/{{.Version}}" hx-target="#changes-{{.Version}}">изменения</button>
+      {{if and $d.CanEdit (ne .Version $d.Latest)}}
+      <button class="small-btn danger" hx-post="/lists/{{$d.Slug}}/rollback/{{.Version}}"
+        hx-confirm="Вернуть список к состоянию после версии {{.Version}}? Всё, что изменилось позже, будет отменено новой версией.">откатить к этой</button>
+      {{end}}
+    </span>
+  </div>
+  <div id="changes-{{.Version}}" class="changes"></div>
+</li>
+{{end}}
+{{if .More}}
+<li hx-get="/lists/{{.Slug}}/history/more?before={{.Before}}" hx-trigger="revealed" hx-swap="outerHTML" class="muted small">Загрузка…</li>
+{{else if and .CanEdit .Latest}}
+<li class="version">
+  <div class="vhead">
+    <span class="vnum">v0</span>
+    <span class="muted small">список только что создан, записей нет</span>
+    <span class="vactions">
+      <button class="small-btn danger" hx-post="/lists/{{.Slug}}/rollback/0"
+        hx-confirm="Очистить список, вернув его к состоянию до первого изменения? Это тоже будет новая версия, её можно откатить.">откатить к этой</button>
+    </span>
+  </div>
+</li>
+{{else if not .Latest}}
+<li class="muted">Изменений пока не было.</li>
+{{end}}
+{{end}}
+
+{{define "changes"}}
+{{if .}}
+<ul class="plain change-list">
+  {{range .}}
+  <li class="ch-{{.Op}}">
+    {{if eq .Op "add"}}<span class="plus">+</span>{{else if eq .Op "remove"}}<span class="minus">−</span>{{else}}<span class="muted">~</span>{{end}}
+    <span class="mono">{{.Value}}</span> <span class="badge">{{kindLabel .Kind}}</span>
+    {{/* поля изменений — указатели: nil = поле не менялось; deref и flag их разворачивают */}}
+    {{if eq .Op "add"}}
+      {{with deref .NewComment}}<span class="muted">«{{.}}»</span>{{end}}
+      {{if eq (flag .NewEnabled) "off"}}<span class="muted small">(выключена)</span>{{end}}
+    {{else if eq .Op "remove"}}
+      {{with deref .OldComment}}<span class="muted">«{{.}}»</span>{{end}}
+    {{else if eq .Op "update"}}
+      {{if .NewComment}}<span class="small">комментарий «{{deref .OldComment}}» → «{{deref .NewComment}}»</span>{{end}}
+      {{with flag .NewEnabled}}<span class="small">{{if eq . "on"}}включена{{else}}выключена{{end}}</span>{{end}}
+    {{end}}
+  </li>
+  {{end}}
+</ul>
+{{else}}<p class="muted small">Пусто.</p>{{end}}
+{{end}}

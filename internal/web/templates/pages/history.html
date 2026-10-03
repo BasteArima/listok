@@ -1,0 +1,17 @@
+{{define "content"}}
+{{with .Data}}
+<section class="card">
+  <div class="list-head">
+    <div>
+      <h1>{{.List.Title}}</h1>
+      {{template "list-tabs" (tabs .List.Slug "history")}}
+    </div>
+    {{template "list-stats" (stats .List false)}}
+  </div>
+  <p class="muted small">Каждое изменение — отдельная версия. Откат не стирает историю: он создаёт новую версию, которая возвращает список к выбранному состоянию.</p>
+  <ul class="plain versions">
+    {{template "versions" .Versions}}
+  </ul>
+</section>
+{{end}}
+{{end}}

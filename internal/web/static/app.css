@@ -171,3 +171,16 @@ tr.off td.value, tr.off td.comment-cell { opacity: var(--row-off); text-decorati
   background: var(--danger-bg); color: var(--danger-text); border: 1px solid var(--border);
   box-shadow: 0 4px 16px rgba(0,0,0,.2);
 }
+
+/* ---- вкладки и история ---- */
+.tabs { display: flex; gap: 1rem; margin-top: .4rem; }
+.tabs a { color: var(--muted); text-decoration: none; padding-bottom: .15rem; border-bottom: 2px solid transparent; }
+.tabs a[aria-current="page"] { color: var(--text); border-bottom-color: var(--accent); }
+.versions .version { padding: .55rem 0; border-bottom: 1px solid var(--border); }
+.versions > li + li { margin-top: 0; }
+.vhead { display: flex; flex-wrap: wrap; align-items: baseline; gap: .3rem .75rem; }
+.vnum { font-family: var(--mono); font-weight: 600; }
+.vactions { margin-left: auto; display: flex; gap: .4rem; }
+.changes:not(:empty) { margin-top: .5rem; padding-left: .75rem; border-left: 2px solid var(--border); }
+.change-list > li + li { margin-top: .2rem; }
+.version:target { background: color-mix(in srgb, var(--accent) 10%, transparent); }

@@ -74,6 +74,10 @@ func New(d Deps) (*Server, error) {
 	authed("DELETE /lists/{slug}/entries/{id}", s.deleteEntry)
 	authed("GET /lists/{slug}/entries/{id}/row", s.entryRow(false))
 	authed("GET /lists/{slug}/entries/{id}/edit", s.entryRow(true))
+	authed("GET /lists/{slug}/history", s.historyPage)
+	authed("GET /lists/{slug}/history/more", s.historyMore)
+	authed("GET /lists/{slug}/history/{version}", s.historyVersion)
+	authed("POST /lists/{slug}/rollback/{version}", s.rollback)
 
 	// Защита от CSRF: браузерные запросы с изменением состояния только с того же origin.
 	cop := http.NewCrossOriginProtection()

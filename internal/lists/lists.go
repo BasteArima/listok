@@ -5,6 +5,7 @@ package lists
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/BasteArima/listok/internal/entry"
+	"github.com/BasteArima/listok/internal/history"
 	"github.com/BasteArima/listok/internal/store"
 )
 
@@ -266,4 +268,99 @@ func (s *Service) Delete(ctx context.Context, u store.User, l store.List, id int
 		s.idx.Remove(l.ID, entry.Entry{Value: removed.Value, Kind: entry.Kind(removed.Kind)})
 	}
 	return nil
+}
+
+var ErrBadVersion = errors.New("такой версии нет")
+
+func (s *Service) Versions(ctx context.Context, l store.List, before int64, limit int) ([]store.Version, error) {
+	return s.st.Versions(ctx, l.ID, before, limit)
+}
+
+func (s *Service) Version(ctx context.Context, l store.List, version int64) (store.Version, []store.Change, error) {
+	v, cs, err := s.st.VersionWithChanges(ctx, l.ID, version)
+	if errors.Is(err, store.ErrNotFound) {
+		return store.Version{}, nil, ErrBadVersion
+	}
+	return v, cs, err
+}
+
+// Rollback возвращает список к состоянию на версию target одной новой версией (source='rollback').
+// target = 0 — состояние до первого изменения (пустой список). Возвращает номер новой версии,
+// 0 — если состояние уже совпадает.
+func (s *Service) Rollback(ctx context.Context, u store.User, l store.List, target int64) (int64, error) {
+	if !CanEdit(l) {
+		return 0, ErrForbidden
+	}
+	newVersion, changes, err := s.st.Mutate(ctx, store.MutateOptions{
+		ListID: l.ID, UserID: u.ID, Source: "rollback", Message: fmt.Sprintf("откат к версии %d", target), Now: s.now(),
+	}, func(m *store.Mutation) error {
+		cur, err := m.CurrentVersion()
+		if err != nil {
+			return err
+		}
+		if target < 0 || target > cur {
+			return ErrBadVersion
+		}
+		entries, err := m.Entries()
+		if err != nil {
+			return err
+		}
+		current := make(map[string]history.State, len(entries))
+		ids := make(map[string]int64, len(entries))
+		for _, e := range entries {
+			current[e.Value] = history.State{Kind: e.Kind, Comment: e.Comment, Enabled: e.Enabled}
+			ids[e.Value] = e.ID
+		}
+		newer, err := m.ChangesAfter(target)
+		if err != nil {
+			return err
+		}
+		plan := history.Diff(current, history.Reconstruct(current, newer))
+		for _, v := range plan.Remove {
+			if _, err := m.Remove(ids[v]); err != nil {
+				return err
+			}
+		}
+		for _, up := range plan.Update {
+			if _, _, err := m.Update(ids[up.Value], up.Comment, up.Enabled); err != nil {
+				return err
+			}
+		}
+		for _, a := range plan.Add {
+			if _, err := m.AddWith(a.Value, a.State.Kind, a.State.Comment, a.State.Enabled); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	s.applyToIndex(l.ID, changes)
+	return newVersion, nil
+}
+
+// applyToIndex переносит в индекс покрытия изменения включённости из записанных изменений.
+func (s *Service) applyToIndex(listID int64, changes []store.Change) {
+	for _, c := range changes {
+		e := entry.Entry{Value: c.Value, Kind: entry.Kind(c.Kind)}
+		switch c.Op {
+		case "add":
+			if c.NewEnabled == nil || *c.NewEnabled {
+				s.idx.Add(listID, e)
+			}
+		case "remove":
+			if c.OldEnabled == nil || *c.OldEnabled {
+				s.idx.Remove(listID, e)
+			}
+		case "update":
+			if c.NewEnabled != nil {
+				if *c.NewEnabled {
+					s.idx.Add(listID, e)
+				} else {
+					s.idx.Remove(listID, e)
+				}
+			}
+		}
+	}
 }

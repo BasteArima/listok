@@ -8,7 +8,7 @@
 <ul class="plain recent">
   {{range .}}
   <li>
-    <a href="/lists/{{.ListSlug}}">{{.ListTitle}}</a>
+    <a href="/lists/{{.ListSlug}}">{{.ListTitle}}</a> <a class="muted small" href="/lists/{{.ListSlug}}/history#v{{.Version}}">v{{.Version}}</a>
     {{if .Added}}<span class="plus">+{{.Added}}</span>{{end}}{{if .Removed}} <span class="minus">−{{.Removed}}</span>{{end}}{{if .Updated}} <span class="muted">~{{.Updated}}</span>{{end}}
     <span class="mono small">{{range $i, $v := .Sample}}{{if $i}}, {{end}}{{$v}}{{end}}{{if gt (add .Added .Removed .Updated) (len .Sample)}}…{{end}}</span>
     <div class="muted small">{{if .Username}}{{.Username}}{{else}}система{{end}} · {{ago .CreatedAt}}</div>

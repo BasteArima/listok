@@ -77,7 +77,43 @@ var funcs = template.FuncMap{
 		}
 		return string(w)
 	},
-	"ago":    ago,
+	"ago":  ago,
+	"tabs": func(slug, active string) map[string]string { return map[string]string{"Slug": slug, "Active": active} },
+	"deref": func(p *string) string {
+		if p == nil {
+			return ""
+		}
+		return *p
+	},
+	// flag: nil → "", true → "on", false → "off".
+	"flag": func(p *bool) string {
+		switch {
+		case p == nil:
+			return ""
+		case *p:
+			return "on"
+		}
+		return "off"
+	},
+	"sourceLabel": func(s string) string {
+		switch s {
+		case "web":
+			return "вручную"
+		case "api":
+			return "через API"
+		case "proposal":
+			return "по предложению"
+		case "remote":
+			return "обновление из источника"
+		case "expire":
+			return "истёк срок"
+		case "rollback":
+			return "откат"
+		case "import":
+			return "импорт"
+		}
+		return s
+	},
 	"static": staticURL,
 	"stats":  func(l store.List, oob bool) statsData { return statsData{l, oob} },
 	"add": func(n ...int) int {

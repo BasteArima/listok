@@ -53,8 +53,9 @@
 | `GET /lists/{slug}/entries/{id}/row`, `…/edit` | Строка таблицы в режиме просмотра / правки комментария |
 | `PATCH /lists/{slug}/entries/{id}` | Комментарий, вкл/выкл, срок |
 | `DELETE /lists/{slug}/entries/{id}` | Удалить |
-| `GET /lists/{slug}/history`, `GET /lists/{slug}/history/{v}` | История и diff |
-| `POST /lists/{slug}/rollback/{v}` | Откат |
+| `GET /lists/{slug}/history` | Лента версий (по 50, дальше `…/history/more?before=N` по прокрутке) |
+| `GET /lists/{slug}/history/{v}` | Фрагмент: изменения версии v |
+| `POST /lists/{slug}/rollback/{v}` | Откат к состоянию после версии v (0 = пустой список). htmx: 204 + `HX-Redirect` на историю. Нужна роль owner/editor/admin |
 | `GET/POST /lists/{slug}/members` | Права |
 | `GET /proposals`, `GET /proposals/{id}` | Предложения |
 | `POST /proposals`, `POST /proposals/{id}/decide` | Создать / решить (всё или по строкам) |

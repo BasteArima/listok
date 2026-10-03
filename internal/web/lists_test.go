@@ -198,6 +198,13 @@ func TestListsPermissions(t *testing.T) {
 		t.Fatalf("viewer через быстрое добавление: %d", r.StatusCode)
 	}
 
+	if r := f.do(t, "POST", "/lists/mine/rollback/0", nil); r.StatusCode != http.StatusForbidden {
+		t.Fatalf("viewer откатывает: %d", r.StatusCode)
+	}
+	if strings.Contains(body(t, f.get(t, "/lists/mine/history")), "откатить к этой") {
+		t.Fatal("viewer не должен видеть кнопку отката")
+	}
+
 	// Без сессии htmx получает 401, а не страницу входа во фрагмент.
 	anon := newClient(e)
 	if r := anon.do(t, "POST", "/preview", url.Values{"input": {"x.example"}}); r.StatusCode != http.StatusUnauthorized {

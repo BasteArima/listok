@@ -5,6 +5,7 @@
     <div>
       <h1>{{.List.Title}}</h1>
       {{if .List.Description}}<p class="muted">{{.List.Description}}</p>{{end}}
+      {{template "list-tabs" (tabs .List.Slug "entries")}}
     </div>
     {{template "list-stats" (stats .List false)}}
   </div>
