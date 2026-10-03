@@ -41,3 +41,9 @@ func fromNullUnix(v sql.NullInt64) *time.Time {
 	t := fromUnix(v.Int64)
 	return &t
 }
+
+// Backup — согласованная копия БД в файл path (VACUUM INTO). Файла path быть не должно.
+func (s *Store) Backup(ctx context.Context, path string) error {
+	_, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, path)
+	return err
+}

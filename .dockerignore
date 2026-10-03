@@ -1,0 +1,12 @@
+.git
+.github
+.idea
+.vscode
+docs
+data
+*.db
+*.db-*
+.env
+.env.*
+/listok
+/listok.exe

@@ -1,0 +1,51 @@
+name: image
+
+# На каждый push в main: тесты, затем образ ghcr.io/bastearima/listok:latest и :sha-<7 символов>.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test -count=1 ./...
+
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        run: echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: VERSION=${{ steps.meta.outputs.short }}
+          tags: |
+            ghcr.io/bastearima/listok:latest
+            ghcr.io/bastearima/listok:sha-${{ steps.meta.outputs.short }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

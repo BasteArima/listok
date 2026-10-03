@@ -20,7 +20,7 @@ listok/
 │   ├── routers/                 # роутеры и фиды: права, состав, отдача по токену (Serve), статус; позже отчёты агента
 │   ├── remote/                  # загрузка внешних списков
 │   ├── auth/                    # пароли (argon2id), токены, сессии, /setup, лимитер входа; позже API-токены и права
-│   ├── jobs/                    # фоновые задачи (expirer, retention, backup, remote)
+│   ├── jobs/                    # фоновые задачи раз в час: чистка сессий и журнала опросов, бэкап; позже expirer, remote
 │   ├── web/                     # htmx-обработчики, шаблоны, статика
 │   │   ├── handlers_*.go
 │   │   ├── templates/           # layout.html, pages/*.html, partials/*.html
@@ -30,9 +30,10 @@ listok/
 │   ├── listok-agent.uc          # агент на роутере (ucode)
 │   ├── listok-agent.init        # procd init-скрипт
 │   └── install.sh.tmpl          # шаблон установщика, отдаётся по /install/<token>
+├── .github/workflows/image.yml  # тесты + образ ghcr.io/bastearima/listok на push в main
 └── deploy/
-    ├── Dockerfile               # multi-stage, итог: distroless/static
-    └── compose.yml              # стек Portainer на homesrv
+    ├── Dockerfile               # multi-stage, итог: distroless/static-debian12:nonroot; healthcheck = /listok healthcheck
+    └── compose.yml              # стек Portainer на homesrv: network_mode bridge, 172.17.0.1:8097
 ```
 
 ## Правила слоёв

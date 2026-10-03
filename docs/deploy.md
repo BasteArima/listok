@@ -1,37 +1,73 @@
 # Развёртывание
 
-## Где
+## Где и как
 
-homesrv (OMV + Portainer), отдельный стек. Наружу через Nginx Proxy Manager на `listok.baste.ru`. Весь интерфейс открыт наружу и защищён паролем (D-012).
+homesrv (OMV + Portainer, x86_64, Docker 29), отдельный стек `listok`. Наружу через Nginx Proxy Manager на `listok.baste.ru`. Интерфейс открыт наружу и защищён паролем (D-012).
 
-## Образ
-
-Multi-stage: `golang:1.25` → `CGO_ENABLED=0 go build -trimpath -ldflags="-s -w"` → `gcr.io/distroless/static:nonroot`. Порт 8080, том `/data`.
+- **Образ**: `ghcr.io/bastearima/listok:latest` и `:sha-<7 символов>`. Его собирает GitHub Actions (`.github/workflows/image.yml`) на каждый push в `main`, после `go vet` и тестов. На сервере образ не собирается.
+- **Dockerfile**: `deploy/Dockerfile`. Сборка `golang:1.27-alpine` → `gcr.io/distroless/static-debian12:nonroot` (без шелла, uid 65532). Порт 8080, том `/data`, healthcheck — сам бинарник (`/listok healthcheck`).
+- **Стек**: `deploy/compose.yml`.
+  - `network_mode: bridge`: на homesrv исчерпан пул адресов Docker, своя сеть у стека не создастся.
+  - Порт публикуется только на `172.17.0.1:8097`. Туда ходит NPM, а напрямую по http из LAN сервис недоступен. Порт 8096 занят Jellyfin.
 
 ## Переменные окружения
 
 | Переменная | По умолчанию | Смысл |
 |---|---|---|
 | `LISTOK_ADDR` | `:8080` | адрес прослушивания |
-| `LISTOK_DATA` | `/data` | БД `listok.db`, бэкапы |
+| `LISTOK_DATA` | `/data` | БД `listok.db` и `backups/` |
 | `LISTOK_BASE_URL` | — (обязательно) | `https://listok.baste.ru`, нужен для ссылок фидов и установщика |
 | `LISTOK_ADMIN_USER` / `LISTOK_ADMIN_PASSWORD` | — | создать админа при первом запуске, если пользователей нет. Если не заданы — мастер `/setup` (см. ниже) |
 | `LISTOK_TRUSTED_PROXY` | `172.16.0.0/12` | откуда доверять `X-Forwarded-For` (NPM) |
-| `LISTOK_LONGPOLL_MAX` | `55` | верхний предел `?wait=` в секундах |
-| `LISTOK_TG_BOT_TOKEN` | — | уведомления, необязательно |
-| `LISTOK_BACKUP_KEEP` | `14` | сколько ночных бэкапов хранить |
-
-## NPM
-
-- Proxy host `listok.baste.ru` → `homesrv:<порт>`, SSL Let's Encrypt, Websockets не нужны (SSE работает поверх обычного HTTP).
-- Для long-poll и SSE во вкладке Advanced: `proxy_read_timeout 120s; proxy_buffering off;`. После этого `LISTOK_LONGPOLL_MAX` можно поднять до ~110.
-- Access list NPM не используется: добавлять записи нужно с телефона откуда угодно (D-012).
+| `LISTOK_LONGPOLL_MAX` | `55` | верхний предел `?wait=` в секундах (этап 2) |
+| `LISTOK_TG_BOT_TOKEN` | — | уведомления, необязательно (этап 5) |
+| `LISTOK_BACKUP_KEEP` | `14` | сколько ежедневных бэкапов хранить; `0` — бэкапы выключены |
+| `TZ` | UTC | часовой пояс: дата в имени бэкапа и время в логах |
 
 ## Первый запуск
 
-1. Если заданы `LISTOK_ADMIN_USER` и `LISTOK_ADMIN_PASSWORD`, а пользователей в БД нет, админ создаётся из env. После этого переменные можно убрать из стека.
-2. Иначе сервис при старте печатает в лог одноразовый **setup-токен**, и все страницы перенаправляют на `/setup`. На этой странице вводятся токен из `docker logs`, логин и пароль. После создания админа `/setup` отключается навсегда. Без токена занять админку раньше владельца нельзя, хотя сервис уже открыт наружу.
+1. **Образ.** Дождаться зелёного workflow `image` в GitHub после push. Проверить, что пакет `listok` в GHCR публичный: GitHub → профиль → Packages → listok → Package settings → Change visibility. Если пакет приватный, Portainer не скачает образ без авторизации.
+2. **Стек.** Portainer → Stacks → Add stack `listok` → вставить `deploy/compose.yml` → Deploy.
+3. **Админ.** Если `LISTOK_ADMIN_*` не заданы, сервис при старте печатает в лог одноразовый **setup-токен**: `docker logs listok | grep setup_token`. Все страницы ведут на `/setup`, там вводятся токен, логин и пароль. После создания админа `/setup` отключается навсегда. Токен живёт до рестарта контейнера, перебор ограничен.
+4. **DNS.** A-запись `listok.baste.ru` → внешний IP дома.
+5. **NPM.** Proxy host:
+   - Domain `listok.baste.ru` → `http` `172.17.0.1` `8097`.
+   - SSL: Let's Encrypt, Force SSL, HTTP/2.
+   - Websockets не нужны: SSE работает поверх обычного HTTP.
+   - Advanced (для long-poll и SSE, нужно с этапа 2):
+     ```
+     proxy_read_timeout 120s;
+     proxy_buffering off;
+     ```
+     После этого `LISTOK_LONGPOLL_MAX` можно поднять до ~110.
+   - Access list не ставим: добавлять записи нужно с телефона откуда угодно (D-012).
+6. **Изнутри домашней сети.** Если `listok.baste.ru` из LAN не открывается (роутер не делает hairpin NAT), добавить на роутере подмену DNS `listok.baste.ru` → `192.168.0.105`, как это сделано для `openfront.baste.ru`. Сначала проверить, нужно ли это вообще.
+7. **Проверка.**
+   - `curl -s https://listok.baste.ru/healthz` → `ok`;
+   - в логе контейнера строка `listok запущен version=<sha>`;
+   - `docker inspect --format '{{.State.Health.Status}}' listok` → `healthy`.
+
+## Подключение роутера (до агента, этап 1)
+
+Роутеры → новый роутер → фид для секции `main` (и `geo`, если нужно) → «Копировать» ссылку → LuCI → forkop → секция → **Domain and IP lists** → вставить ссылку → сохранить. forkop перезапустится один раз.
+
+Ограничения без агента (их снимет этап 2):
+- forkop перекачивает список по своему `update_interval` (1d). Новые записи доезжают к ночи или после ручного `forkop list_update`.
+- После перезагрузки роутера список по URL может не подхватиться до повторного рестарта forkop (`forkop-integration.md`, гонка).
+
+## Обновление
+
+Push в `main` → workflow собирает `:latest`. Дальше один из вариантов:
+- Portainer → стек `listok` → **Pull and redeploy**;
+- автоматически, как у OpenFront: таймер на homesrv тянет `:latest` и при смене образа передеплоивает стек через Portainer API. Пока не настроено.
+
+Откат: в стеке заменить `:latest` на `:sha-<коммит>` и передеплоить. Миграции БД идут только вперёд: откат на версию старше последней миграции не поддерживается, поэтому перед таким обновлением нужен бэкап.
 
 ## Бэкапы
 
-Ночью `VACUUM INTO /data/backups/listok-YYYYMMDD.db`, хранится `LISTOK_BACKUP_KEEP` штук. Сам `/data` можно включить в общий бэкап homesrv.
+- **Когда**: раз в час фоновая задача проверяет, есть ли бэкап за сегодня. Если нет, делает `VACUUM INTO /data/backups/listok-YYYYMMDD.db` через временный файл, так что битый «сегодняшний» бэкап не появится. Хранится `LISTOK_BACKUP_KEEP` последних.
+- **Где на хосте**: том `listok-data` → `docker volume inspect listok_listok-data` → `Mountpoint`. Его можно включить в общий бэкап homesrv.
+- **Восстановление**:
+  1. Остановить стек.
+  2. Подменить `/data/listok.db` нужным бэкапом и удалить `listok.db-wal` и `listok.db-shm`.
+  3. Запустить стек.

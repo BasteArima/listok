@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,13 +17,21 @@ import (
 	"github.com/BasteArima/listok/internal/config"
 	"github.com/BasteArima/listok/internal/db"
 	"github.com/BasteArima/listok/internal/feed"
+	"github.com/BasteArima/listok/internal/jobs"
 	"github.com/BasteArima/listok/internal/lists"
 	"github.com/BasteArima/listok/internal/routers"
 	"github.com/BasteArima/listok/internal/store"
 	"github.com/BasteArima/listok/internal/web"
 )
 
+// version подставляется при сборке: -ldflags "-X main.version=..."
+var version = "dev"
+
 func main() {
+	// В образе distroless нет curl: healthcheck Docker вызывает сам бинарник.
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		os.Exit(healthcheck())
+	}
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	if err := run(log); err != nil {
 		log.Error("остановка с ошибкой", "err", err)
@@ -67,7 +76,11 @@ func run(log *slog.Logger) error {
 		// Единственное место, где токен печатается целиком: в этом его смысл. Живёт до рестарта.
 		log.Warn("пользователей нет: откройте /setup и введите setup-токен", "setup_token", setupToken)
 	}
-	go cleanup(ctx, st, log)
+	jobsRunner := &jobs.Runner{Store: st, Log: log, BackupDir: filepath.Join(cfg.DataDir, "backups"), BackupKeep: cfg.BackupKeep}
+	if cfg.BackupKeep == 0 {
+		jobsRunner.BackupDir = "" // LISTOK_BACKUP_KEEP=0 — бэкапы выключены
+	}
+	go jobsRunner.Run(ctx)
 
 	listsSvc := lists.New(st, log, nil)
 	n, err := listsSvc.LoadIndex(ctx)
@@ -93,7 +106,7 @@ func run(log *slog.Logger) error {
 
 	errc := make(chan error, 1)
 	go func() {
-		log.Info("listok запущен", "addr", cfg.Addr, "db", dbPath, "base_url", cfg.BaseURL)
+		log.Info("listok запущен", "version", version, "addr", cfg.Addr, "db", dbPath, "base_url", cfg.BaseURL)
 		errc <- srv.ListenAndServe()
 	}()
 
@@ -113,25 +126,24 @@ func run(log *slog.Logger) error {
 	return nil
 }
 
-// cleanup раз в час удаляет просроченные сессии и журнал опросов старше 30 дней. Позже переедет в internal/jobs.
-func cleanup(ctx context.Context, st *store.Store, log *slog.Logger) {
-	t := time.NewTicker(time.Hour)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			if n, err := st.DeleteExpiredSessions(ctx, time.Now()); err != nil {
-				log.Warn("чистка сессий", "err", err)
-			} else if n > 0 {
-				log.Info("удалены просроченные сессии", "count", n)
-			}
-			if n, err := st.DeleteOldFetches(ctx, time.Now().Add(-30*24*time.Hour)); err != nil {
-				log.Warn("чистка журнала опросов", "err", err)
-			} else if n > 0 {
-				log.Info("удалены старые записи журнала опросов", "count", n)
-			}
-		}
+// healthcheck — GET /healthz на локальный порт из LISTOK_ADDR. 0 — здоров.
+func healthcheck() int {
+	addr := os.Getenv("LISTOK_ADDR")
+	if addr == "" {
+		addr = ":8080"
 	}
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return 1
+	}
+	c := http.Client{Timeout: 3 * time.Second}
+	resp, err := c.Get("http://127.0.0.1:" + port + "/healthz")
+	if err != nil {
+		return 1
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 1
+	}
+	return 0
 }
