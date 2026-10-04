@@ -215,20 +215,37 @@ func fromDomain(res Result, s string, opt Options) Result {
 		res.Err = ErrInvalid
 		return res
 	}
-	if ps, _ := publicsuffix.PublicSuffix(ascii); ps == ascii {
+	suffix := icannSuffix(ascii)
+	if suffix == ascii {
 		res.Err = ErrPublicSuffix
 		return res
 	}
 
 	value := ascii
 	if !opt.ExactHost {
-		if etld1, err := publicsuffix.EffectiveTLDPlusOne(ascii); err == nil && etld1 != ascii {
-			value = etld1
+		// Регистрируемый домен по ICANN: метка перед ICANN-суффиксом.
+		rest := strings.TrimSuffix(ascii, "."+suffix)
+		if i := strings.LastIndexByte(rest, '.'); i >= 0 {
+			value = rest[i+1:] + "." + suffix
 			res.Host = ascii
 		}
 	}
 	res.Entry = Entry{Value: value, Kind: KindDomain}
 	return res
+}
+
+// icannSuffix — публичный суффикс домена только по ICANN-части Public Suffix List.
+// Частная часть PSL (githubusercontent.com, github.io, notion.site, akamaized.net…) — это границы
+// для cookie в браузерах, а для маршрутизации такие домены — обычные и как раз нужны целиком (D-026).
+// Для неизвестного TLD (lan, test) суффикс — последняя метка.
+func icannSuffix(d string) string {
+	ps, icann := publicsuffix.PublicSuffix(d)
+	for !icann && strings.Contains(ps, ".") {
+		// Частное правило: ICANN-суффикс лежит строго внутри него.
+		_, parent, _ := strings.Cut(ps, ".")
+		ps, icann = publicsuffix.PublicSuffix(parent)
+	}
+	return ps
 }
 
 func validDomain(d string) bool {

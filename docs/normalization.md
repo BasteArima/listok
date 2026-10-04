@@ -27,11 +27,13 @@
 
 ## Хост или регистрируемый домен
 
-forkop ставит домены как `domain_suffix`: `youtube.com` покрывает и все поддомены. Поэтому из `www.youtube.com` или `rr3---sn-xxx.googlevideo.com` по умолчанию берётся **eTLD+1** (`publicsuffix.EffectiveTLDPlusOne`), а исходный хост кладётся в `Result.Host`, чтобы интерфейс показал «что именно добавится». `Options.ExactHost` («только этот хост») оставляет хост целиком. Приватные суффиксы из PSL учитываются: `user.github.io` не сокращается до `github.io`.
+forkop ставит домены как `domain_suffix`: `youtube.com` покрывает и все поддомены. Поэтому из `www.youtube.com` или `rr3---sn-xxx.googlevideo.com` по умолчанию берётся **регистрируемый домен по ICANN** — метка перед ICANN-суффиксом (`icannSuffix`), а исходный хост кладётся в `Result.Host`, чтобы интерфейс показал «что именно добавится». `Options.ExactHost` («только этот хост») оставляет хост целиком.
+
+**Частная часть Public Suffix List не учитывается** (D-026): `raw.githubusercontent.com` → `githubusercontent.com`, `user.github.io` → `github.io`, а `notion.site`, `akamaized.net`, `supabase.co`, `ondigitalocean.app`, `com.ru` добавляются как обычные домены. Для браузера это границы cookie, для маршрутизации — платформы, которые нужно пускать в туннель целиком.
 
 ## Отклоняется
 
-- Публичный суффикс целиком (`com`, `co.uk`) и одиночные метки (`localhost`).
+- ICANN-суффикс целиком (`com`, `co.uk`, `gov.uk`, `app`) и одиночные метки (`localhost`).
 - Пустое, длиннее 253 символов, с недопустимыми символами.
 - Префиксы короче `/8` (IPv4) или `/16` (IPv6), включая `0.0.0.0/0` и `::/0`: это почти наверняка ошибка.
 
