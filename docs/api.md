@@ -6,19 +6,21 @@
 
 | Метод | Путь | Что делает |
 |---|---|---|
-| GET | `/f/{token}.lst` | Содержимое фида, `text/plain`. `ETag` + `If-None-Match` → 304. Каждый запрос пишется в журнал опросов. `?wait=N` (long-poll) — этап 2, ещё не сделан. |
-| GET | `/install/{token}` | sh-установщик агента. Одноразовый, живёт 24 ч. |
-| GET | `/agent/listok-agent.uc` | Текущая версия агента, для самообновления. |
+| GET | `/f/{token}.lst` | Содержимое фида, `text/plain`. `ETag` + `If-None-Match` → 304. `?wait=N` — long-poll: при совпавшей версии ждёт изменения до N с (не больше `LISTOK_LONGPOLL_MAX`), потом 304. В журнал опросов пишется один итог запроса. |
+| GET | `/install/{token}` | sh-установщик агента (`?ip=` — IP сервера в сети роутера, D-028). Одноразовый, 24 ч; тратится только запросом curl или wget, остальным — страница-подсказка (D-030). 404 — ссылка недействительна, 409 — у роутера нет включённых фидов (ссылка не тратится). Ошибки — телом `echo …; exit 1`. |
+| GET | `/agent/listok-agent.uc` | Текущая версия агента, для самообновления (этап 5, ещё не сделано). |
 
-Неизвестный токен → `404` без подробностей. Ограничение частоты по IP.
+Неизвестный токен → `404` без подробностей. `/f/`, `/install/`, `/agent/v1` ограничены 120 запросами в минуту с IP (429 + `Retry-After`).
 
 ## 2. Агент: `/agent/v1`, заголовок `Authorization: Bearer <agent_token>`
 
 | Метод | Путь | Тело / ответ |
 |---|---|---|
-| POST | `/agent/v1/hello` | `{agent_version, forkop_version, singbox_version, sections:[...]}` → `{feeds:[{section, url}], report_interval_s, report_enabled}` |
-| POST | `/agent/v1/report` | `{observations:[{host, ip, network, port, rule, outbound, hits, bytes}]}` → 204 |
-| POST | `/agent/v1/applied` | `{section, etag, ok, error?}`: результат `forkop list_update` → 204 |
+| POST | `/agent/v1/hello` | `{agent_version, forkop_version, singbox_version, sections:[...]}` → `{feeds:[{section, url}], agent_version, report_interval_s, report_enabled}`. Обновляет `last_seen_at`, `last_ip` и версии роутера (пустые не затирают). `agent_version` в ответе — актуальная на сервере |
+| POST | `/agent/v1/report` | `{observations:[{host, ip, network, port, rule, outbound, hits, bytes}]}` → 204 (этап 4, ещё не сделано) |
+| POST | `/agent/v1/applied` | `{section, etag, ok, error?}`: результат `forkop list_update` → 204. Неизвестная секция → 400 |
+
+Неверный или отозванный токен агента → 401. Тело JSON до 64 КБ. В БД хранится только sha256 токена агента.
 
 ## 3. JSON API: `/api/v1`, заголовок `Authorization: Bearer <api_token>`
 
@@ -66,7 +68,8 @@
 | `GET /routers/{id}`, `POST /routers/{id}`, `POST /routers/{id}/delete` | Карточка роутера: фиды со статусом, ссылками и журналом; правка; удаление |
 | `POST /routers/{id}/feeds` | Новый фид: `section` + `list` (несколько) |
 | `POST /feeds/{id}/lists` | `toggle` | `regenerate` | `delete` | Состав, вкл/выкл, новая ссылка (старая сразу 404), удаление |
-| `POST /routers/{id}/install-token` | Выдать ссылку установки агента (этап 2) |
+| `POST /routers/{id}/install` | Выдать ссылку установки агента (`server_ip` — необязательно). Ответ — карточка роутера с командой установки (показывается один раз) |
+| `POST /routers/{id}/agent/revoke` | Отвязать агент: забыть его токен. htmx: 204 + `HX-Redirect` |
 
 Действия с подтверждением (`hx-confirm`) приходят от htmx и получают 204 + `HX-Redirect`, обычные формы — 303.
 | `GET /suggestions` | Подсказки из clash API: добавить / скрыть / игнорировать шаблон |

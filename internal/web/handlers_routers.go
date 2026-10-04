@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/BasteArima/listok/agent"
 	"github.com/BasteArima/listok/internal/auth"
 	"github.com/BasteArima/listok/internal/routers"
 	"github.com/BasteArima/listok/internal/store"
@@ -18,10 +20,18 @@ func (s *Server) serveFeed(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	c, notModified, err := s.Routers.Serve(r.Context(), token, s.clientIP(r), r.Header.Get("If-None-Match"))
+	// ?wait=N — long-poll: при совпавшем If-None-Match ждём изменения до N секунд (не больше LISTOK_LONGPOLL_MAX).
+	var wait time.Duration
+	if n, err := strconv.Atoi(r.URL.Query().Get("wait")); err == nil && n > 0 {
+		wait = min(time.Duration(n)*time.Second, s.Config.LongPollMax)
+	}
+	c, notModified, err := s.Routers.Serve(r.Context(), token, s.clientIP(r), r.Header.Get("If-None-Match"), wait)
 	if errors.Is(err, routers.ErrNotFound) {
 		http.NotFound(w, r)
 		return
+	}
+	if r.Context().Err() != nil {
+		return // роутер ушёл, не дождавшись: отвечать некому
 	}
 	if err != nil {
 		s.Log.Error("отдача фида", "token", auth.TokenPrefix(token), "err", err)
@@ -87,6 +97,10 @@ type routerData struct {
 	Router store.Router
 	Feeds  []feedView
 	Lists  []store.List // видимые владельцу роутера: из них собираются фиды
+	// Install — только что выданная ссылка установки агента (показывается один раз).
+	Install *installView
+	// AgentVersion — актуальная версия агента на сервере: с ней сравнивается установленная.
+	AgentVersion string
 }
 
 func (s *Server) routerFromPath(w http.ResponseWriter, r *http.Request) (store.Router, bool) {
@@ -108,10 +122,10 @@ func (s *Server) routerPage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.renderRouter(w, r, rt, http.StatusOK, "", nil)
+	s.renderRouter(w, r, rt, http.StatusOK, "", nil, nil)
 }
 
-func (s *Server) renderRouter(w http.ResponseWriter, r *http.Request, rt store.Router, status int, msg string, form map[string]string) {
+func (s *Server) renderRouter(w http.ResponseWriter, r *http.Request, rt store.Router, status int, msg string, form map[string]string, install *installView) {
 	ctx := r.Context()
 	feeds, err := s.Routers.Feeds(ctx, rt, 20)
 	if err != nil {
@@ -128,7 +142,7 @@ func (s *Server) renderRouter(w http.ResponseWriter, r *http.Request, rt store.R
 		s.serverError(w, err)
 		return
 	}
-	d := routerData{Router: rt, Lists: ls}
+	d := routerData{Router: rt, Lists: ls, Install: install, AgentVersion: agent.Version}
 	for _, f := range feeds {
 		set := map[int64]bool{}
 		for _, id := range f.ListIDs {
@@ -146,7 +160,7 @@ func (s *Server) updateRouter(w http.ResponseWriter, r *http.Request) {
 	}
 	err := s.Routers.Update(r.Context(), *userFrom(r.Context()), rt.ID, r.PostFormValue("name"), r.PostFormValue("notes"))
 	if errors.Is(err, routers.ErrBadName) || errors.Is(err, routers.ErrLongNotes) {
-		s.renderRouter(w, r, rt, http.StatusBadRequest, err.Error(), nil)
+		s.renderRouter(w, r, rt, http.StatusBadRequest, err.Error(), nil, nil)
 		return
 	}
 	if err != nil {
@@ -187,7 +201,7 @@ func (s *Server) createFeed(w http.ResponseWriter, r *http.Request) {
 	section := r.PostFormValue("section")
 	_, err := s.Routers.CreateFeed(r.Context(), *userFrom(r.Context()), rt.ID, section, listIDsFrom(r))
 	if errors.Is(err, routers.ErrBadSection) || errors.Is(err, routers.ErrBadList) || errors.Is(err, store.ErrSectionTaken) {
-		s.renderRouter(w, r, rt, http.StatusBadRequest, err.Error(), map[string]string{"section": section})
+		s.renderRouter(w, r, rt, http.StatusBadRequest, err.Error(), map[string]string{"section": section}, nil)
 		return
 	}
 	if err != nil {

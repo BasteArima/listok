@@ -24,16 +24,28 @@ var (
 var sectionRe = regexp.MustCompile(`^[A-Za-z0-9_]{1,32}$`)
 
 type Service struct {
-	st      *store.Store
-	builder *feed.Builder
-	now     func() time.Time
+	st       *store.Store
+	builder  *feed.Builder
+	notifier *feed.Notifier
+	now      func() time.Time
 }
 
-func New(st *store.Store, builder *feed.Builder, now func() time.Time) *Service {
+func New(st *store.Store, builder *feed.Builder, notifier *feed.Notifier, now func() time.Time) *Service {
 	if now == nil {
 		now = time.Now
 	}
-	return &Service{st: st, builder: builder, now: now}
+	if notifier == nil {
+		notifier = feed.NewNotifier()
+	}
+	return &Service{st: st, builder: builder, notifier: notifier, now: now}
+}
+
+// changed будит long-poll: изменился состав, токен или включённость фида.
+func (s *Service) changed(err error) error {
+	if err == nil {
+		s.notifier.Notify()
+	}
+	return err
 }
 
 func (s *Service) List(ctx context.Context, u store.User) ([]store.Router, error) {
@@ -83,7 +95,7 @@ func (s *Service) Delete(ctx context.Context, u store.User, id int64) error {
 	if _, err := s.Get(ctx, u, id); err != nil {
 		return err
 	}
-	return s.st.DeleteRouter(ctx, id)
+	return s.changed(s.st.DeleteRouter(ctx, id))
 }
 
 // FeedState — фид с текущим содержимым и статусом опроса.
@@ -192,7 +204,7 @@ func (s *Service) SetFeedLists(ctx context.Context, u store.User, feedID int64, 
 	if err := s.checkLists(ctx, owner, listIDs); err != nil {
 		return 0, err
 	}
-	return r.ID, s.st.SetFeedLists(ctx, f.ID, listIDs)
+	return r.ID, s.changed(s.st.SetFeedLists(ctx, f.ID, listIDs))
 }
 
 func (s *Service) RegenerateToken(ctx context.Context, u store.User, feedID int64) (int64, error) {
@@ -200,7 +212,7 @@ func (s *Service) RegenerateToken(ctx context.Context, u store.User, feedID int6
 	if err != nil {
 		return 0, err
 	}
-	return r.ID, s.st.SetFeedToken(ctx, f.ID, feed.NewToken())
+	return r.ID, s.changed(s.st.SetFeedToken(ctx, f.ID, feed.NewToken()))
 }
 
 func (s *Service) SetFeedEnabled(ctx context.Context, u store.User, feedID int64, enabled bool) (int64, error) {
@@ -208,7 +220,7 @@ func (s *Service) SetFeedEnabled(ctx context.Context, u store.User, feedID int64
 	if err != nil {
 		return 0, err
 	}
-	return r.ID, s.st.SetFeedEnabled(ctx, f.ID, enabled)
+	return r.ID, s.changed(s.st.SetFeedEnabled(ctx, f.ID, enabled))
 }
 
 func (s *Service) DeleteFeed(ctx context.Context, u store.User, feedID int64) (int64, error) {
@@ -216,35 +228,56 @@ func (s *Service) DeleteFeed(ctx context.Context, u store.User, feedID int64) (i
 	if err != nil {
 		return 0, err
 	}
-	return r.ID, s.st.DeleteFeed(ctx, f.ID)
+	return r.ID, s.changed(s.st.DeleteFeed(ctx, f.ID))
 }
 
 // Serve — содержимое фида по токену для роутера. Выключенный или неизвестный фид — ErrNotFound.
-// Опрос пишется в журнал; ip — адрес клиента, notModified — совпал If-None-Match.
-func (s *Service) Serve(ctx context.Context, token, ip, ifNoneMatch string) (c feed.Content, notModified bool, err error) {
+// ip — адрес клиента, notModified — совпал If-None-Match.
+//
+// wait > 0 включает long-poll: если версия совпала с If-None-Match, запрос ждёт изменения
+// до wait и только потом отвечает 304. В журнал пишется один итог запроса, а не каждое пробуждение.
+// Клиент ушёл раньше — возвращается ошибка контекста, журнал не трогается.
+func (s *Service) Serve(ctx context.Context, token, ip, ifNoneMatch string, wait time.Duration) (c feed.Content, notModified bool, err error) {
 	if token == "" {
 		return feed.Content{}, false, ErrNotFound
 	}
-	f, err := s.st.FeedByToken(ctx, token)
-	if errors.Is(err, store.ErrNotFound) || (err == nil && !f.Enabled) {
-		return feed.Content{}, false, ErrNotFound
+	var deadline <-chan time.Time
+	if wait > 0 {
+		t := time.NewTimer(wait)
+		defer t.Stop()
+		deadline = t.C
 	}
-	if err != nil {
-		return feed.Content{}, false, err
+	for {
+		woke := s.notifier.Wait() // до сборки: изменение между сборкой и ожиданием не потеряется
+		f, err := s.st.FeedByToken(ctx, token)
+		if errors.Is(err, store.ErrNotFound) || (err == nil && !f.Enabled) {
+			return feed.Content{}, false, ErrNotFound
+		}
+		if err != nil {
+			return feed.Content{}, false, err
+		}
+		if c, err = s.builder.Build(ctx, f); err != nil {
+			return feed.Content{}, false, err
+		}
+		notModified = etagMatch(ifNoneMatch, c.ETag)
+		if notModified && deadline != nil {
+			select {
+			case <-woke:
+				continue
+			case <-ctx.Done():
+				return feed.Content{}, false, ctx.Err()
+			case <-deadline:
+			}
+		}
+		status := 200
+		if notModified {
+			status = 304
+		}
+		if err := s.st.RecordFetch(ctx, f.ID, s.now(), ip, status, c.ETag); err != nil {
+			return feed.Content{}, false, err
+		}
+		return c, notModified, nil
 	}
-	c, err = s.builder.Build(ctx, f)
-	if err != nil {
-		return feed.Content{}, false, err
-	}
-	notModified = etagMatch(ifNoneMatch, c.ETag)
-	status := 200
-	if notModified {
-		status = 304
-	}
-	if err := s.st.RecordFetch(ctx, f.ID, s.now(), ip, status, c.ETag); err != nil {
-		return feed.Content{}, false, err
-	}
-	return c, notModified, nil
 }
 
 // etagMatch — If-None-Match содержит наш ETag (допускаем список и слабую форму W/).

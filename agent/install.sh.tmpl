@@ -1,0 +1,77 @@
+#!/bin/sh
+# Установщик агента listok. Ссылка одноразовая: повторный запуск — с новой ссылкой из интерфейса.
+# Что делает: docs/router-agent.md, раздел «Установка».
+set -e
+
+SERVER='[[.Server]]'
+SECTIONS='[[range $i, $f := .Feeds]][[if $i]] [[end]][[$f.Section]][[end]]'
+
+say() { echo "listok: $*"; }
+die() { echo "listok: ОШИБКА: $*" >&2; exit 1; }
+
+[ "$(id -u)" = 0 ] || die "запускать от root"
+[ -x /usr/bin/forkop ] || die "forkop не найден (/usr/bin/forkop)"
+command -v ucode >/dev/null || die "нет ucode"
+command -v curl >/dev/null || die "нет curl"
+for s in $SECTIONS; do
+	uci -q get "forkop.$s" >/dev/null || die "в forkop нет секции $s — создайте её или исправьте фид в listok"
+done
+
+STAMP=$(date +%Y%m%d-%H%M%S)
+cp /etc/config/forkop "/etc/config/forkop.bak-listok-$STAMP"
+say "бэкап настроек forkop: /etc/config/forkop.bak-listok-$STAMP"
+
+mkdir -p /etc/listok
+cat > /usr/bin/listok-agent <<'LISTOK_AGENT_EOF'
+[[.AgentCode]]LISTOK_AGENT_EOF
+chmod 755 /usr/bin/listok-agent
+
+cat > /etc/init.d/listok-agent <<'LISTOK_INIT_EOF'
+[[.InitCode]]LISTOK_INIT_EOF
+chmod 755 /etc/init.d/listok-agent
+
+# Токены секретные: конфиг читает только root.
+( umask 077; cat > /etc/config/listok <<'LISTOK_CONFIG_EOF'
+config agent 'agent'
+	option server '[[.Server]]'
+[[- if .ServerIP]]
+	option server_ip '[[.ServerIP]]'
+[[- end]]
+	option token '[[.AgentToken]]'
+[[range .Feeds]]
+config feed
+	option section '[[.Section]]'
+	option token '[[.Token]]'
+[[end]]
+LISTOK_CONFIG_EOF
+)
+
+for s in $SECTIONS; do
+	say "первая загрузка фида секции $s"
+	/usr/bin/listok-agent sync "$s" || die "не удалось скачать фид секции $s — проверьте связь роутера с $SERVER"
+done
+
+# В forkop: ссылки на фиды listok (если их вставляли вручную) заменяются локальными файлами.
+# Локальный путь forkop читает синхронно при старте, без гонки, как у ссылок (forkop-integration.md).
+for s in $SECTIONS; do
+	keep=""
+	for v in $(uci -q get "forkop.$s.domain_ip_lists"); do
+		case "$v" in
+			"$SERVER"/f/*) say "секция $s: ссылка на фид заменена локальным файлом" ;;
+			"/etc/listok/$s.lst") ;;
+			*) keep="$keep $v" ;;
+		esac
+	done
+	uci -q delete "forkop.$s.domain_ip_lists" || true
+	for v in $keep; do uci add_list "forkop.$s.domain_ip_lists=$v"; done
+	uci add_list "forkop.$s.domain_ip_lists=/etc/listok/$s.lst"
+done
+uci commit forkop
+
+say "перезапуск forkop (единственный: дальше списки обновляются без перезапуска sing-box)"
+/etc/init.d/forkop reload
+/etc/init.d/listok-agent enable
+/etc/init.d/listok-agent restart
+
+say "готово. Состояние: listok-agent status, журнал: logread -e listok-agent"
+say "удалить: listok-agent uninstall"

@@ -25,11 +25,13 @@ listok/
 │   │   ├── handlers_*.go
 │   │   ├── templates/           # layout.html, pages/*.html, partials/*.html
 │   │   └── static/              # htmx.min.js (2.0.11), app.js, app.css, favicon.svg; позже manifest.webmanifest, sw.js
-│   └── api/                     # JSON API /api/v1 и /agent/v1, отдача фидов /f/
+│   │   └── handlers_agent.go    # /install/<token>, /agent/v1 (hello, applied), выдача ссылки установки
+│   └── api/                     # JSON API /api/v1 (этап 5); отдача фидов /f/ и API агента пока в web
 ├── agent/
+│   ├── agent.go                 # go:embed файлов агента, Version, сборка установщика
 │   ├── listok-agent.uc          # агент на роутере (ucode)
-│   ├── listok-agent.init        # procd init-скрипт
-│   └── install.sh.tmpl          # шаблон установщика, отдаётся по /install/<token>
+│   ├── listok-agent.init        # procd init-скрипт, экземпляр на секцию
+│   └── install.sh.tmpl          # шаблон установщика (разделители [[ ]]), отдаётся по /install/<token>
 ├── .github/workflows/image.yml  # тесты + образ ghcr.io/bastearima/listok на push в main
 └── deploy/
     ├── Dockerfile               # multi-stage, итог: distroless/static-debian12:nonroot; healthcheck = /listok healthcheck

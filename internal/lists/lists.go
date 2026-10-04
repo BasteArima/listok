@@ -33,11 +33,33 @@ type Service struct {
 	log      *slog.Logger
 	now      func() time.Time
 	onDelete []func(listID int64)
+	onChange []func()
 }
 
 // OnDelete — вызвать fn после удаления списка (сброс кеша фидов, см. feed.Builder.Forget).
 func (s *Service) OnDelete(fn func(listID int64)) {
 	s.onDelete = append(s.onDelete, fn)
+}
+
+// OnChange — вызвать fn после любого изменения содержимого или удаления списка
+// (будит long-poll фидов, см. feed.Notifier).
+func (s *Service) OnChange(fn func()) {
+	s.onChange = append(s.onChange, fn)
+}
+
+func (s *Service) changed() {
+	for _, fn := range s.onChange {
+		fn()
+	}
+}
+
+// mutate — store.Mutate + уведомление, если появилась новая версия.
+func (s *Service) mutate(ctx context.Context, o store.MutateOptions, fn func(*store.Mutation) error) (int64, []store.Change, error) {
+	version, changes, err := s.st.Mutate(ctx, o, fn)
+	if err == nil && version > 0 {
+		s.changed()
+	}
+	return version, changes, err
 }
 
 func New(st *store.Store, log *slog.Logger, now func() time.Time) *Service {
@@ -179,7 +201,7 @@ func (s *Service) Add(ctx context.Context, u store.User, l store.List, input str
 	}
 
 	var added []entry.Entry
-	_, _, err = s.st.Mutate(ctx, store.MutateOptions{ListID: l.ID, UserID: u.ID, Source: source, Now: s.now()},
+	_, _, err = s.mutate(ctx, store.MutateOptions{ListID: l.ID, UserID: u.ID, Source: source, Now: s.now()},
 		func(m *store.Mutation) error {
 			added = added[:0]
 			for i := range items {
@@ -236,7 +258,7 @@ func (s *Service) update(ctx context.Context, u store.User, l store.List, id int
 		return store.Entry{}, ErrForbidden
 	}
 	var before, after store.Entry
-	_, _, err := s.st.Mutate(ctx, store.MutateOptions{ListID: l.ID, UserID: u.ID, Source: "web", Now: s.now()},
+	_, _, err := s.mutate(ctx, store.MutateOptions{ListID: l.ID, UserID: u.ID, Source: "web", Now: s.now()},
 		func(m *store.Mutation) error {
 			var err error
 			before, after, err = m.Update(id, comment, enabled)
@@ -263,7 +285,7 @@ func (s *Service) Delete(ctx context.Context, u store.User, l store.List, id int
 		return ErrForbidden
 	}
 	var removed store.Entry
-	_, _, err := s.st.Mutate(ctx, store.MutateOptions{ListID: l.ID, UserID: u.ID, Source: "web", Now: s.now()},
+	_, _, err := s.mutate(ctx, store.MutateOptions{ListID: l.ID, UserID: u.ID, Source: "web", Now: s.now()},
 		func(m *store.Mutation) error {
 			var err error
 			removed, err = m.Remove(id)
@@ -287,7 +309,7 @@ func (s *Service) Clear(ctx context.Context, u store.User, l store.List) (int, e
 	if !CanEdit(l) {
 		return 0, ErrForbidden
 	}
-	_, changes, err := s.st.Mutate(ctx, store.MutateOptions{
+	_, changes, err := s.mutate(ctx, store.MutateOptions{
 		ListID: l.ID, UserID: u.ID, Source: "web", Message: "очистка списка", Now: s.now(),
 	}, func(m *store.Mutation) error {
 		_, err := m.RemoveAll()
@@ -325,7 +347,7 @@ func (s *Service) Bulk(ctx context.Context, u store.User, l store.List, op strin
 		return 0, nil
 	}
 	enabled := op == "enable"
-	_, changes, err := s.st.Mutate(ctx, store.MutateOptions{
+	_, changes, err := s.mutate(ctx, store.MutateOptions{
 		ListID: l.ID, UserID: u.ID, Source: "web", Message: fmt.Sprintf("%s (%d)", msg, len(ids)), Now: s.now(),
 	}, func(m *store.Mutation) error {
 		for _, id := range ids {
@@ -372,6 +394,7 @@ func (s *Service) DeleteList(ctx context.Context, u store.User, l store.List, ip
 	for _, fn := range s.onDelete {
 		fn(l.ID)
 	}
+	s.changed()
 	details := map[string]any{"slug": l.Slug, "title": l.Title, "entries": l.EntryCount, "version": l.Version, "feeds": feeds}
 	if err := s.st.AddAudit(ctx, store.AuditEntry{
 		At: s.now(), UserID: u.ID, Action: "list.delete", ObjectType: "list", ObjectID: l.ID, Details: details, IP: ip,
@@ -403,7 +426,7 @@ func (s *Service) Rollback(ctx context.Context, u store.User, l store.List, targ
 	if !CanEdit(l) {
 		return 0, ErrForbidden
 	}
-	newVersion, changes, err := s.st.Mutate(ctx, store.MutateOptions{
+	newVersion, changes, err := s.mutate(ctx, store.MutateOptions{
 		ListID: l.ID, UserID: u.ID, Source: "rollback", Message: fmt.Sprintf("откат к версии %d", target), Now: s.now(),
 	}, func(m *store.Mutation) error {
 		cur, err := m.CurrentVersion()

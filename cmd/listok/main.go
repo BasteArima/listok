@@ -90,8 +90,10 @@ func run(log *slog.Logger) error {
 	log.Info("индекс покрытия загружен", "entries", n)
 
 	builder := feed.NewBuilder(st)
+	notifier := feed.NewNotifier()
 	listsSvc.OnDelete(func(int64) { builder.Forget() })
-	routerSvc := routers.New(st, builder, nil)
+	listsSvc.OnChange(notifier.Notify) // будит long-poll фидов
+	routerSvc := routers.New(st, builder, notifier, nil)
 
 	handler, err := web.New(web.Deps{DB: conn, Store: st, Auth: authSvc, Lists: listsSvc, Routers: routerSvc, Config: cfg, Log: log})
 	if err != nil {

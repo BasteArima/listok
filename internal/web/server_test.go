@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/BasteArima/listok/internal/auth"
 	"github.com/BasteArima/listok/internal/config"
@@ -60,11 +61,13 @@ func newEnv(t *testing.T, adminUser, adminPass string) *env {
 	e.ts = httptest.NewServer(handler)
 	t.Cleanup(e.ts.Close)
 
-	cfg := config.Config{BaseURL: e.ts.URL, TrustedProxy: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}}
+	cfg := config.Config{BaseURL: e.ts.URL, TrustedProxy: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}, LongPollMax: 5 * time.Second}
 	e.lists = lists.New(st, log, nil)
 	builder := feed.NewBuilder(st)
+	notifier := feed.NewNotifier()
 	e.lists.OnDelete(func(int64) { builder.Forget() })
-	e.srv, err = New(Deps{DB: conn, Store: st, Auth: a, Lists: e.lists, Routers: routers.New(st, builder, nil), Config: cfg, Log: log})
+	e.lists.OnChange(notifier.Notify)
+	e.srv, err = New(Deps{DB: conn, Store: st, Auth: a, Lists: e.lists, Routers: routers.New(st, builder, notifier, nil), Config: cfg, Log: log})
 	if err != nil {
 		t.Fatal(err)
 	}

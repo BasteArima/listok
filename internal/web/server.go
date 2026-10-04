@@ -38,6 +38,7 @@ type Server struct {
 	partials     *template.Template
 	secureCookie bool
 	handler      http.Handler
+	publicLimit  *rateLimit // публичные пути по токену: /f/, /install/, /agent/v1
 }
 
 func New(d Deps) (*Server, error) {
@@ -50,13 +51,17 @@ func New(d Deps) (*Server, error) {
 		pages:        pages,
 		partials:     partials,
 		secureCookie: strings.HasPrefix(d.Config.BaseURL, "https://"),
+		publicLimit:  newRateLimit(publicRatePerMinute),
 	}
 
 	mux := http.NewServeMux()
 	staticFS, _ := fs.Sub(assets, "static")
 	mux.Handle("GET /static/", http.StripPrefix("/static/", cacheStatic(http.FileServerFS(staticFS))))
 	mux.HandleFunc("GET /healthz", s.healthz)
-	mux.HandleFunc("GET /f/{file}", s.serveFeed)
+	mux.HandleFunc("GET /f/{file}", s.limited(s.serveFeed))
+	mux.HandleFunc("GET /install/{token}", s.limited(s.installScript))
+	mux.HandleFunc("POST /agent/v1/hello", s.limited(s.agentHello))
+	mux.HandleFunc("POST /agent/v1/applied", s.limited(s.agentApplied))
 
 	mux.HandleFunc("GET /setup", s.setupForm)
 	mux.HandleFunc("POST /setup", s.setupSubmit)
@@ -89,6 +94,8 @@ func New(d Deps) (*Server, error) {
 	authed("GET /routers/{id}", s.routerPage)
 	authed("POST /routers/{id}", s.updateRouter)
 	authed("POST /routers/{id}/delete", s.deleteRouter)
+	authed("POST /routers/{id}/install", s.createInstall)
+	authed("POST /routers/{id}/agent/revoke", s.revokeAgent)
 	authed("POST /routers/{id}/feeds", s.createFeed)
 	authed("POST /feeds/{id}/lists", s.feedAction(func(r *http.Request, u store.User, id int64) (int64, error) {
 		return s.Routers.SetFeedLists(r.Context(), u, id, listIDsFrom(r))

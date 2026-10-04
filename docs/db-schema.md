@@ -201,6 +201,10 @@ CREATE TABLE feeds (
   last_fetch_at INTEGER,
   last_etag     TEXT,                       -- что роутер получил последним
   created_at    INTEGER NOT NULL,
+  applied_etag  TEXT,                       -- 0002: версия, которую агент применил последней
+  applied_at    INTEGER,                    -- 0002: когда пришёл отчёт /agent/v1/applied
+  applied_ok    INTEGER,                    -- 0002: 1 — rule-set пересобран, 0 — ошибка
+  applied_error TEXT,                       -- 0002: текст ошибки от агента (до 300 символов)
   UNIQUE (router_id, section)
 );
 

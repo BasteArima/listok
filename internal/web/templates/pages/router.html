@@ -26,6 +26,55 @@
   </details>
 </section>
 
+<section class="card" id="agent">
+  <div class="list-head">
+    <div>
+      <h2>Агент на роутере</h2>
+      {{if .Router.HasAgent}}
+        {{with .Router.LastSeenAt}}<div class="small"><span class="plus">● на связи</span> <span class="muted">· {{ago .}}</span></div>
+        {{else}}<div class="small"><span class="muted">● установлен, ещё не выходил на связь</span></div>{{end}}
+      {{else}}<div class="small muted">не установлен: роутер забирает фиды сам, раз в сутки</div>{{end}}
+    </div>
+    {{if .Router.HasAgent}}
+    <div class="stats muted small">
+      <div>агент {{or .Router.AgentVersion "—"}}{{if and .Router.AgentVersion (ne .Router.AgentVersion .AgentVersion)}} <span class="warn">(есть {{.AgentVersion}})</span>{{end}}</div>
+      {{with .Router.ForkopVersion}}<div>forkop {{.}}</div>{{end}}
+      {{with .Router.SingboxVersion}}<div>sing-box {{.}}</div>{{end}}
+      {{with .Router.LastIP}}<div class="mono">{{.}}</div>{{end}}
+    </div>
+    {{end}}
+  </div>
+
+  {{with .Install}}
+  <div class="result">
+    <p><b>Выполните на роутере</b> (SSH под root). Ссылка одноразовая, действует до {{.Expires.Format "02.01 15:04"}}:</p>
+    <div class="copy-row">
+      <input class="mono" readonly value="{{.Command}}" id="install-cmd">
+      <button class="small-btn" type="button" data-copy="install-cmd">Копировать</button>
+    </div>
+    <p class="muted small">Установщик сделает бэкап настроек forkop, заменит ссылки на фиды listok локальными файлами и один раз перезапустит forkop. Дальше изменения доезжают за секунды, без перезапуска sing-box.</p>
+  </div>
+  {{else}}
+  <details class="edit"{{if $.Form.server_ip}} open{{end}}>
+    <summary>{{if .Router.HasAgent}}Переустановить агент{{else}}Установить агент{{end}}</summary>
+    <form class="form-grid" method="post" action="/routers/{{.Router.ID}}/install">
+      <label class="wide">IP сервера listok в сети роутера <span class="muted">(необязательно)</span>
+        <input name="server_ip" value="{{$.Form.server_ip}}" placeholder="например 192.168.1.10" autocomplete="off" spellcheck="false">
+        <span class="muted small">Нужно, если роутер в той же сети, что и сервер listok: обращаясь к своему внешнему адресу, роутер попадает в собственный LuCI. Для роутера в другой сети оставьте пустым.</span>
+      </label>
+      <div><button class="primary" type="submit">Выдать ссылку установки</button></div>
+    </form>
+    {{with .Router.InstallExpiresAt}}<p class="muted small">Есть невыполненная ссылка (до {{.Format "02.01 15:04"}}); новая её заменит.</p>{{end}}
+  </details>
+  {{end}}
+  {{if .Router.HasAgent}}
+  <form method="post" action="/routers/{{.Router.ID}}/agent/revoke" hx-post="/routers/{{.Router.ID}}/agent/revoke"
+    hx-confirm="Отвязать агент? Его токен перестанет работать: статус и отчёты пропадут. Фиды продолжат отдаваться. Удалить сам агент с роутера: listok-agent uninstall.">
+    <button class="small-btn" type="submit">Отвязать агент</button>
+  </form>
+  {{end}}
+</section>
+
 {{$lists := .Lists}}
 {{range .Feeds}}
 <section class="card feed" id="feed-{{.ID}}">
@@ -38,6 +87,12 @@
         {{else}}<span class="muted">● ещё не забирал</span>{{end}}
         {{with .LastFetchAt}}<span class="muted">· {{ago .}}</span>{{end}}
       </div>
+      {{if .AppliedAt}}<div class="small">
+        {{if not .AppliedOK}}<span class="warn">● агент не смог применить: {{.AppliedError}}</span>
+        {{else if eq .AppliedETag .Current.ETag}}<span class="plus">● применено на роутере</span>
+        {{else}}<span class="muted">● на роутере применена версия {{.AppliedETag}}</span>{{end}}
+        <span class="muted">· {{ago .AppliedAt}}</span>
+      </div>{{end}}
     </div>
     <div class="stats muted small">
       <div><b>{{.Current.Entries}}</b> записей в фиде</div>
@@ -115,12 +170,9 @@
 
 <section class="card">
   <h2>Как подключить к forkop</h2>
-  <ol class="small">
-    <li>LuCI → forkop → нужная секция → <b>Domain and IP lists</b> → вставить ссылку фида → сохранить.</li>
-    <li>forkop перезапустится один раз и скачает список. Дальше он обновляет его сам раз в сутки (<code>update_interval</code>), без перезапуска sing-box.</li>
-    <li>Первая строка фида — служебная <code>listok-sentinel.invalid</code>: она нужна, чтобы новые записи подхватывались без рестарта.</li>
-  </ol>
-  <p class="warn small">Пока нет агента: после перезагрузки роутера список по URL может не подхватиться до повторного перезапуска forkop (гонка при старте). Агент listok уберёт и это, и суточную задержку.</p>
+  <p class="small"><b>С агентом</b> (рекомендуется): блок «Агент на роутере» выше → «Выдать ссылку установки» → выполнить команду на роутере. Агент держит файлы фидов локально и применяет изменения за секунды через <code>forkop list_update</code>, без перезапуска sing-box.</p>
+  <p class="small"><b>Без агента</b>: LuCI → forkop → секция → Conditions → <b>Domain and IP lists</b> → вставить ссылку фида и нажать <b>+</b> → Save & Apply (если LuCI откатил изменение — «Apply unchecked»). forkop обновит список раз в сутки.</p>
+  <p class="warn small">Без агента после перезагрузки роутера список по ссылке может не подхватиться до повторного перезапуска forkop (гонка при старте).</p>
 </section>
 {{end}}
 {{end}}

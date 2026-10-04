@@ -7,6 +7,8 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/BasteArima/listok/internal/store"
 )
@@ -149,4 +151,42 @@ func safeNext(next string) string {
 		return "/"
 	}
 	return next
+}
+
+// publicRatePerMinute — запросов в минуту с одного IP к публичным путям. С запасом: несколько роутеров
+// за одним VPN-выходом делают по 1–2 запроса в минуту на секцию (long-poll), плюс hello и отчёты.
+const publicRatePerMinute = 120
+
+// rateLimit — счётчик запросов на IP в окне фиксированной минуты. В памяти, сбрасывается при рестарте.
+type rateLimit struct {
+	mu     sync.Mutex
+	limit  int
+	window int64
+	counts map[string]int
+}
+
+func newRateLimit(perMinute int) *rateLimit {
+	return &rateLimit{limit: perMinute, counts: map[string]int{}}
+}
+
+func (l *rateLimit) allow(ip string, now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if w := now.Unix() / 60; w != l.window {
+		l.window, l.counts = w, map[string]int{}
+	}
+	l.counts[ip]++
+	return l.counts[ip] <= l.limit
+}
+
+// limited — 429 при превышении publicRatePerMinute с одного IP.
+func (s *Server) limited(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.publicLimit.allow(s.clientIP(r), time.Now()) {
+			w.Header().Set("Retry-After", "60")
+			http.Error(w, "too many requests", http.StatusTooManyRequests)
+			return
+		}
+		h(w, r)
+	}
 }

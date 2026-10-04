@@ -20,24 +20,39 @@ type Router struct {
 	// LastFetchAt — последний опрос любого фида роутера.
 	LastFetchAt *time.Time
 	FeedCount   int
+
+	// Агент (этап 2). HasAgent — агент установлен (выдан токен агента).
+	HasAgent         bool
+	AgentVersion     string
+	ForkopVersion    string
+	SingboxVersion   string
+	LastSeenAt       *time.Time // последний запрос агента к /agent/v1
+	LastIP           string
+	InstallExpiresAt *time.Time // ссылка установки ждёт использования до этого момента
 }
 
 const routerSelect = `
 	SELECT r.id, r.name, r.owner_id, u.username, r.notes, r.created_at,
 	       (SELECT max(f.last_fetch_at) FROM feeds f WHERE f.router_id = r.id),
-	       (SELECT count(*) FROM feeds f WHERE f.router_id = r.id)
+	       (SELECT count(*) FROM feeds f WHERE f.router_id = r.id),
+	       r.agent_token_hash IS NOT NULL, coalesce(r.agent_version, ''), coalesce(r.forkop_version, ''),
+	       coalesce(r.singbox_version, ''), r.last_seen_at, coalesce(r.last_ip, ''),
+	       CASE WHEN r.install_token_hash IS NOT NULL THEN r.install_expires_at END
 	FROM routers r JOIN users u ON u.id = r.owner_id`
 
 func scanRouter(row interface{ Scan(...any) error }) (Router, error) {
 	var r Router
 	var created int64
-	var last sql.NullInt64
-	err := row.Scan(&r.ID, &r.Name, &r.OwnerID, &r.OwnerName, &r.Notes, &created, &last, &r.FeedCount)
+	var last, seen, install sql.NullInt64
+	err := row.Scan(&r.ID, &r.Name, &r.OwnerID, &r.OwnerName, &r.Notes, &created, &last, &r.FeedCount,
+		&r.HasAgent, &r.AgentVersion, &r.ForkopVersion, &r.SingboxVersion, &seen, &r.LastIP, &install)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Router{}, ErrNotFound
 	}
 	r.CreatedAt = fromUnix(created)
 	r.LastFetchAt = fromNullUnix(last)
+	r.LastSeenAt = fromNullUnix(seen)
+	r.InstallExpiresAt = fromNullUnix(install)
 	return r, err
 }
 
@@ -97,23 +112,31 @@ type Feed struct {
 	// Владелец роутера: от него зависит, какие списки фид может включать.
 	OwnerID      int64
 	OwnerIsAdmin bool
+
+	// Результат применения на роутере (отчёт агента /agent/v1/applied).
+	AppliedETag  string
+	AppliedAt    *time.Time
+	AppliedOK    bool
+	AppliedError string
 }
 
 const feedSelect = `
 	SELECT f.id, f.router_id, f.section, f.token, f.enabled, f.last_fetch_at, coalesce(f.last_etag, ''), f.created_at,
-	       r.owner_id, u.is_admin
+	       r.owner_id, u.is_admin,
+	       coalesce(f.applied_etag, ''), f.applied_at, coalesce(f.applied_ok, 0), coalesce(f.applied_error, '')
 	FROM feeds f JOIN routers r ON r.id = f.router_id JOIN users u ON u.id = r.owner_id`
 
 func scanFeed(row interface{ Scan(...any) error }) (Feed, error) {
 	var f Feed
-	var last sql.NullInt64
+	var last, applied sql.NullInt64
 	var created int64
 	err := row.Scan(&f.ID, &f.RouterID, &f.Section, &f.Token, &f.Enabled, &last, &f.LastETag, &created,
-		&f.OwnerID, &f.OwnerIsAdmin)
+		&f.OwnerID, &f.OwnerIsAdmin, &f.AppliedETag, &applied, &f.AppliedOK, &f.AppliedError)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Feed{}, ErrNotFound
 	}
 	f.LastFetchAt = fromNullUnix(last)
+	f.AppliedAt = fromNullUnix(applied)
 	f.CreatedAt = fromUnix(created)
 	return f, err
 }

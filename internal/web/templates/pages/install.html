@@ -1,0 +1,15 @@
+{{define "content"}}
+<section class="card">
+  <h1>Установка агента listok</h1>
+  {{if .Data.Valid}}
+  <p>Эта ссылка ставит агент на роутер <b>{{.Data.Router}}</b>. Её нужно выполнить <b>на роутере</b>, в SSH-сессии под root:</p>
+  <div class="copy-row">
+    <input class="mono" readonly value="{{.Data.Command}}" id="install-cmd">
+    <button class="small-btn" type="button" data-copy="install-cmd">Копировать</button>
+  </div>
+  <p class="muted small">Ссылка одноразовая и тратится только при запуске на роутере: открытие в браузере её не расходует.</p>
+  {{else}}
+  <p class="alert" role="alert">Ссылка установки недействительна: она просрочена или уже использована. Выдайте новую на странице роутера в listok.</p>
+  {{end}}
+</section>
+{{end}}
