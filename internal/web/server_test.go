@@ -62,7 +62,9 @@ func newEnv(t *testing.T, adminUser, adminPass string) *env {
 
 	cfg := config.Config{BaseURL: e.ts.URL, TrustedProxy: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}}
 	e.lists = lists.New(st, log, nil)
-	e.srv, err = New(Deps{DB: conn, Store: st, Auth: a, Lists: e.lists, Routers: routers.New(st, feed.NewBuilder(st), nil), Config: cfg, Log: log})
+	builder := feed.NewBuilder(st)
+	e.lists.OnDelete(func(int64) { builder.Forget() })
+	e.srv, err = New(Deps{DB: conn, Store: st, Auth: a, Lists: e.lists, Routers: routers.New(st, builder, nil), Config: cfg, Log: log})
 	if err != nil {
 		t.Fatal(err)
 	}

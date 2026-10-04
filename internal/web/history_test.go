@@ -16,7 +16,7 @@ func TestHistoryAndRollback(t *testing.T) {
 	// v1: +a +b; v2: комментарий b; v3: выкл b; v4: −a; v5: +c
 	e.do(t, "POST", "/lists/common/entries", url.Values{"input": {"a.example b.example"}})
 	ids := map[string]string{}
-	for _, m := range regexp.MustCompile(`id="entry-(\d+)"[^>]*>\s*<td class="mono value">([^<]+)<`).FindAllStringSubmatch(body(t, e.get(t, "/lists/common/rows")), -1) {
+	for _, m := range regexp.MustCompile(`id="entry-(\d+)"[^>]*>\s*<td class="sel">.*?</td>\s*<td class="mono value">([^<]+)<`).FindAllStringSubmatch(body(t, e.get(t, "/lists/common/rows")), -1) {
 		ids[m[2]] = m[1]
 	}
 	e.do(t, "PATCH", "/lists/common/entries/"+ids["b.example"], url.Values{"comment": {"бэ"}})

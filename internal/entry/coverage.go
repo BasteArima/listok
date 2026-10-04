@@ -49,6 +49,18 @@ func (ix *Index) Remove(listID int64, e Entry) {
 	}
 }
 
+// RemoveList убирает из индекса все записи списка (список удалён).
+func (ix *Index) RemoveList(listID int64) {
+	ix.mu.Lock()
+	defer ix.mu.Unlock()
+	for k := range ix.domains {
+		removeFrom(ix.domains, k, listID)
+	}
+	for k := range ix.prefixes {
+		removeFrom(ix.prefixes, k, listID)
+	}
+}
+
 // CoveredBy — записи, которые покрывают e, включая точное совпадение.
 func (ix *Index) CoveredBy(e Entry) []Ref {
 	ix.mu.RLock()

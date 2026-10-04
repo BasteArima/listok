@@ -28,10 +28,16 @@ var (
 var slugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,39}$`)
 
 type Service struct {
-	st  *store.Store
-	idx *entry.Index
-	log *slog.Logger
-	now func() time.Time
+	st       *store.Store
+	idx      *entry.Index
+	log      *slog.Logger
+	now      func() time.Time
+	onDelete []func(listID int64)
+}
+
+// OnDelete — вызвать fn после удаления списка (сброс кеша фидов, см. feed.Builder.Forget).
+func (s *Service) OnDelete(fn func(listID int64)) {
+	s.onDelete = append(s.onDelete, fn)
 }
 
 func New(st *store.Store, log *slog.Logger, now func() time.Time) *Service {
@@ -55,6 +61,11 @@ func (s *Service) LoadIndex(ctx context.Context) (int, error) {
 
 func CanEdit(l store.List) bool {
 	return l.Role == "owner" || l.Role == "editor" || l.Role == "admin"
+}
+
+// CanManage — управление самим списком (удаление): владелец или админ, но не editor.
+func CanManage(l store.List) bool {
+	return l.Role == "owner" || l.Role == "admin"
 }
 
 func (s *Service) Visible(ctx context.Context, u store.User) ([]store.List, error) {
@@ -267,6 +278,107 @@ func (s *Service) Delete(ctx context.Context, u store.User, l store.List, id int
 	if removed.Enabled {
 		s.idx.Remove(l.ID, entry.Entry{Value: removed.Value, Kind: entry.Kind(removed.Kind)})
 	}
+	return nil
+}
+
+// Clear удаляет все записи списка одной версией: её можно откатить во вкладке «История».
+// Возвращает число удалённых записей.
+func (s *Service) Clear(ctx context.Context, u store.User, l store.List) (int, error) {
+	if !CanEdit(l) {
+		return 0, ErrForbidden
+	}
+	_, changes, err := s.st.Mutate(ctx, store.MutateOptions{
+		ListID: l.ID, UserID: u.ID, Source: "web", Message: "очистка списка", Now: s.now(),
+	}, func(m *store.Mutation) error {
+		_, err := m.RemoveAll()
+		return err
+	})
+	if err != nil {
+		return 0, err
+	}
+	s.applyToIndex(l.ID, changes)
+	return len(changes), nil
+}
+
+var ErrBadBulk = errors.New("неизвестное массовое действие")
+
+// MaxBulk — сколько записей можно обработать одним массовым действием.
+const MaxBulk = 5000
+
+var bulkMessages = map[string]string{
+	"delete":  "удаление выбранных",
+	"disable": "выключение выбранных",
+	"enable":  "включение выбранных",
+}
+
+// Bulk применяет действие (delete, disable, enable) к выбранным записям одной версией.
+// id чужого списка или уже удалённой записи пропускается. Возвращает число изменённых записей.
+func (s *Service) Bulk(ctx context.Context, u store.User, l store.List, op string, ids []int64) (int, error) {
+	if !CanEdit(l) {
+		return 0, ErrForbidden
+	}
+	msg, ok := bulkMessages[op]
+	if !ok || len(ids) > MaxBulk {
+		return 0, ErrBadBulk
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	enabled := op == "enable"
+	_, changes, err := s.st.Mutate(ctx, store.MutateOptions{
+		ListID: l.ID, UserID: u.ID, Source: "web", Message: fmt.Sprintf("%s (%d)", msg, len(ids)), Now: s.now(),
+	}, func(m *store.Mutation) error {
+		for _, id := range ids {
+			var err error
+			if op == "delete" {
+				_, err = m.Remove(id)
+			} else {
+				_, _, err = m.Update(id, nil, &enabled)
+			}
+			if err != nil && !errors.Is(err, store.ErrNotFound) {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	s.applyToIndex(l.ID, changes)
+	return len(changes), nil
+}
+
+// FeedCount — в скольких фидах роутеров сейчас участвует список (для предупреждения перед удалением).
+func (s *Service) FeedCount(ctx context.Context, l store.List) (int, error) {
+	return s.st.ListFeedCount(ctx, l.ID)
+}
+
+// DeleteList удаляет список насовсем вместе с историей (D-027). Его записи сразу пропадают из фидов.
+func (s *Service) DeleteList(ctx context.Context, u store.User, l store.List, ip string) error {
+	if !CanManage(l) {
+		return ErrForbidden
+	}
+	feeds, err := s.st.ListFeedCount(ctx, l.ID)
+	if err != nil {
+		return err
+	}
+	if err := s.st.DeleteList(ctx, l.ID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return ErrNotFound
+		}
+		return err
+	}
+	s.idx.RemoveList(l.ID)
+	for _, fn := range s.onDelete {
+		fn(l.ID)
+	}
+	details := map[string]any{"slug": l.Slug, "title": l.Title, "entries": l.EntryCount, "version": l.Version, "feeds": feeds}
+	if err := s.st.AddAudit(ctx, store.AuditEntry{
+		At: s.now(), UserID: u.ID, Action: "list.delete", ObjectType: "list", ObjectID: l.ID, Details: details, IP: ip,
+	}); err != nil {
+		s.log.Warn("не удалось записать audit_log", "action", "list.delete", "err", err)
+	}
+	s.log.Info("список удалён", "slug", l.Slug, "user", u.Username, "entries", l.EntryCount, "feeds", feeds)
 	return nil
 }
 

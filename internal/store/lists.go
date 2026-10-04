@@ -78,6 +78,38 @@ func (s *Store) ListBySlug(ctx context.Context, slug string, userID int64, isAdm
 		sql.Named("slug", slug), sql.Named("uid", userID), sql.Named("admin", isAdmin)))
 }
 
+// ListFeedCount — в скольких фидах список: напрямую или как вложенный в подключённый список.
+func (s *Store) ListFeedCount(ctx context.Context, listID int64) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT count(DISTINCT feed_id) FROM feed_lists
+		WHERE list_id = :id OR list_id IN (SELECT parent_id FROM list_includes WHERE child_id = :id)`,
+		sql.Named("id", listID)).Scan(&n)
+	return n, err
+}
+
+// DeleteList удаляет список насовсем. Записи, история, права, вложения и место в фидах
+// уходят каскадом (foreign_keys включены в db.Open).
+func (s *Store) DeleteList(ctx context.Context, listID int64) error {
+	return s.Tx(ctx, func(tx *sql.Tx) error {
+		// Предложения «подключить этот список» ссылаются на него без каскада.
+		if _, err := tx.ExecContext(ctx, `DELETE FROM proposals WHERE source_list_id = ?`, listID); err != nil {
+			return err
+		}
+		res, err := tx.ExecContext(ctx, `DELETE FROM lists WHERE id = ?`, listID)
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil || n == 0 {
+			if err == nil {
+				err = ErrNotFound
+			}
+			return err
+		}
+		return nil
+	})
+}
+
 func (s *Store) CreateList(ctx context.Context, slug, title, description string, ownerID int64, now time.Time) (int64, error) {
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO lists (slug, title, description, owner_id, kind, created_at, updated_at)

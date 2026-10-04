@@ -61,6 +61,29 @@ func TestIndexCoverage(t *testing.T) {
 	}
 }
 
+func TestIndexRemoveList(t *testing.T) {
+	ix := NewIndex()
+	ix.Add(1, d("youtube.com"))
+	ix.Add(2, d("youtube.com"))
+	ix.Add(1, c("104.29.0.0/16"))
+	ix.Add(2, d("discord.gg"))
+
+	ix.RemoveList(1)
+
+	if got := values(ix.CoveredBy(d("youtube.com"))); !slices.Equal(got, []string{"2:youtube.com"}) {
+		t.Errorf("общий домен: %v, ожидали только список 2", got)
+	}
+	if got := ix.CoveredBy(c("104.29.1.0/24")); len(got) != 0 {
+		t.Errorf("подсеть удалённого списка осталась: %v", values(got))
+	}
+	if got := values(ix.CoveredBy(d("discord.gg"))); !slices.Equal(got, []string{"2:discord.gg"}) {
+		t.Errorf("чужой список задет: %v", got)
+	}
+	if len(ix.domains) != 2 || len(ix.prefixes) != 0 {
+		t.Errorf("пустые ключи не убраны: доменов %d, подсетей %d", len(ix.domains), len(ix.prefixes))
+	}
+}
+
 func TestCompact(t *testing.T) {
 	in := []Entry{
 		d("youtube.com"), d("m.youtube.com"), d("discord.gg"), d("youtube.com"), d("gg.example"),

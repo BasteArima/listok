@@ -142,6 +142,7 @@ label.inline input[type=checkbox] { width: auto; }
 .add-form .quick-opts { margin-top: 0; }
 .filters { display: flex; gap: .5rem; margin-bottom: .75rem; }
 .filters input { flex: 1; }
+@media (max-width: 600px) { .filters { flex-wrap: wrap; } .filters input[type=search] { flex-basis: 100%; } }
 .form-grid { display: grid; gap: .75rem; grid-template-columns: 1fr 1fr; }
 .form-grid .wide { grid-column: 1 / -1; }
 @media (max-width: 600px) { .form-grid { grid-template-columns: 1fr; } }
@@ -152,6 +153,19 @@ th, td { text-align: left; padding: .45rem .5rem; border-bottom: 1px solid var(-
 th { font-size: .8rem; font-weight: 600; color: var(--muted); }
 td.value { word-break: break-all; }
 td.actions { white-space: nowrap; text-align: right; }
+/* Массовый выбор: колонка с галочками видна только в режиме выбора. */
+.entries .sel { display: none; width: 2rem; }
+.entries.selecting .sel { display: table-cell; }
+.entries .sel input { margin: .15rem 0 0; }
+.bulk-bar {
+  position: sticky; bottom: 0; z-index: 5;
+  display: flex; flex-wrap: wrap; align-items: center; gap: .5rem;
+  margin-top: .75rem; padding: .6rem .75rem;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+}
+.bulk-bar > span { margin-right: auto; }
+.bulk-bar[hidden] { display: none; }
+[data-select-mode][aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 tr.off td.value, tr.off td.comment-cell { opacity: var(--row-off); text-decoration: line-through; }
 .inline-form { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; }
 .inline-form input { flex: 1 1 200px; width: auto; padding: .35rem .5rem; }

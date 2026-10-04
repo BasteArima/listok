@@ -25,7 +25,8 @@ type Content struct {
 }
 
 // Builder собирает фиды и кеширует их по ключу «id:версия» входящих списков.
-// Любая правка списка поднимает его версию, поэтому отдельная инвалидация не нужна.
+// Любая правка списка поднимает его версию, поэтому инвалидация нужна только при удалении
+// списка (Forget): SQLite может отдать его id новому списку, и ключ совпадёт со старым.
 type Builder struct {
 	st    *store.Store
 	mu    sync.Mutex
@@ -39,6 +40,13 @@ type cached struct {
 
 func NewBuilder(st *store.Store) *Builder {
 	return &Builder{st: st, cache: map[int64]cached{}}
+}
+
+// Forget сбрасывает весь кеш: следующая отдача каждого фида соберёт его заново.
+func (b *Builder) Forget() {
+	b.mu.Lock()
+	b.cache = map[int64]cached{}
+	b.mu.Unlock()
 }
 
 func (b *Builder) Build(ctx context.Context, f store.Feed) (Content, error) {

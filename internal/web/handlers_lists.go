@@ -195,11 +195,13 @@ type rowsData struct {
 }
 
 type listData struct {
-	List    store.List
-	CanEdit bool
-	Query   string
-	Kind    string
-	Rows    rowsData
+	List      store.List
+	CanEdit   bool
+	CanManage bool
+	FeedCount int // в скольких фидах роутеров список; считается только для CanManage
+	Query     string
+	Kind      string
+	Rows      rowsData
 }
 
 // listFromPath — список из {slug} с проверкой видимости.
@@ -243,9 +245,78 @@ func (s *Server) listPage(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
-	s.render(w, r, http.StatusOK, "list", page{Title: l.Title, Data: listData{
-		List: l, CanEdit: lists.CanEdit(l), Query: r.FormValue("q"), Kind: r.FormValue("kind"), Rows: rows,
-	}})
+	d := listData{
+		List: l, CanEdit: lists.CanEdit(l), CanManage: lists.CanManage(l),
+		Query: r.FormValue("q"), Kind: r.FormValue("kind"), Rows: rows,
+	}
+	if d.CanManage {
+		if d.FeedCount, err = s.Lists.FeedCount(r.Context(), l); err != nil {
+			s.serverError(w, err)
+			return
+		}
+	}
+	s.render(w, r, http.StatusOK, "list", page{Title: l.Title, Data: d})
+}
+
+// bulkEntries — массовое действие над выбранными записями (поля id, op).
+// Отвечает таблицей с текущим фильтром (поля q, kind) и счётчиками out-of-band.
+func (s *Server) bulkEntries(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r.Context())
+	l, ok := s.listFromPath(w, r)
+	if !ok {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	var ids []int64
+	for _, v := range r.PostForm["id"] {
+		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	if _, err := s.Lists.Bulk(r.Context(), *u, l, r.PostFormValue("op"), ids); err != nil {
+		s.listError(w, err)
+		return
+	}
+	l, err := s.Lists.Get(r.Context(), *u, l.Slug)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	rows, err := s.loadRows(r.Context(), l, filterFrom(r), false)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	s.renderFragments(w, http.StatusOK, fragment{"rows", rows}, fragment{"list-stats", statsData{l, true}})
+}
+
+// clearList удаляет все записи списка одной версией; сам список остаётся.
+func (s *Server) clearList(w http.ResponseWriter, r *http.Request) {
+	l, ok := s.listFromPath(w, r)
+	if !ok {
+		return
+	}
+	if _, err := s.Lists.Clear(r.Context(), *userFrom(r.Context()), l); err != nil {
+		s.listError(w, err)
+		return
+	}
+	s.redirect(w, r, "/lists/"+l.Slug)
+}
+
+// deleteList удаляет список насовсем вместе с историей (D-027).
+func (s *Server) deleteList(w http.ResponseWriter, r *http.Request) {
+	l, ok := s.listFromPath(w, r)
+	if !ok {
+		return
+	}
+	if err := s.Lists.DeleteList(r.Context(), *userFrom(r.Context()), l, s.clientIP(r)); err != nil {
+		s.listError(w, err)
+		return
+	}
+	s.redirect(w, r, "/lists")
 }
 
 func (s *Server) listRows(w http.ResponseWriter, r *http.Request) {
@@ -377,6 +448,8 @@ func (s *Server) listError(w http.ResponseWriter, err error) {
 		http.Error(w, "not found", http.StatusNotFound)
 	case errors.Is(err, lists.ErrForbidden):
 		http.Error(w, "forbidden", http.StatusForbidden)
+	case errors.Is(err, lists.ErrBadBulk):
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	case errors.Is(err, lists.ErrLongComment):
 		s.renderFragments(w, http.StatusUnprocessableEntity, fragment{"form-error", err.Error()})
 	default:

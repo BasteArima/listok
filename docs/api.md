@@ -53,6 +53,9 @@
 | `GET /lists/{slug}/entries/{id}/row`, `…/edit` | Строка таблицы в режиме просмотра / правки комментария |
 | `PATCH /lists/{slug}/entries/{id}` | Комментарий, вкл/выкл, срок |
 | `DELETE /lists/{slug}/entries/{id}` | Удалить |
+| `POST /lists/{slug}/entries/bulk` | Массовое действие над выбранными: `op` = delete / disable / enable, `id` повторяется. Одна версия на действие (`message` «удаление выбранных (N)» и т.п.). id чужого списка или уже удалённой записи пропускается, больше 5000 id или неизвестный `op` — 400. Ответ: `<tbody id="rows">` с текущим фильтром (`q`, `kind` из формы фильтров) + OOB счётчики. Нужна роль owner/editor/admin |
+| `POST /lists/{slug}/clear` | Удалить все записи одной версией (`message` «очистка списка»), список остаётся. Откатывается через историю. htmx: 204 + `HX-Redirect` на список. Нужна роль owner/editor/admin |
+| `POST /lists/{slug}/delete` | Удалить список насовсем вместе с историей (D-027), запись `list.delete` в `audit_log`. htmx: 204 + `HX-Redirect` на `/lists`. Только owner/admin |
 | `GET /lists/{slug}/history` | Лента версий (по 50, дальше `…/history/more?before=N` по прокрутке) |
 | `GET /lists/{slug}/history/{v}` | Фрагмент: изменения версии v |
 | `POST /lists/{slug}/rollback/{v}` | Откат к состоянию после версии v (0 = пустой список). htmx: 204 + `HX-Redirect` на историю. Нужна роль owner/editor/admin |

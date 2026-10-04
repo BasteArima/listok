@@ -120,6 +120,22 @@ func (m *Mutation) Remove(id int64) (Entry, error) {
 	return e, nil
 }
 
+// RemoveAll удаляет все записи списка. Каждая попадает в историю как remove,
+// поэтому очистку можно откатить. Возвращает удалённые записи.
+func (m *Mutation) RemoveAll() ([]Entry, error) {
+	entries, err := m.Entries()
+	if err != nil || len(entries) == 0 {
+		return nil, err
+	}
+	if _, err := m.tx.ExecContext(m.ctx, `DELETE FROM entries WHERE list_id = ?`, m.listID); err != nil {
+		return nil, err
+	}
+	for _, e := range entries {
+		m.changes = append(m.changes, Change{Op: "remove", Value: e.Value, Kind: e.Kind, OldComment: ptr(e.Comment), OldEnabled: ptr(e.Enabled)})
+	}
+	return entries, nil
+}
+
 // Update меняет комментарий и/или включённость. nil — поле не трогать. Возвращает запись до и после.
 func (m *Mutation) Update(id int64, comment *string, enabled *bool) (old, updated Entry, err error) {
 	old, err = scanEntry(m.tx.QueryRowContext(m.ctx, entrySelect+` WHERE e.list_id = ? AND e.id = ?`, m.listID, id))

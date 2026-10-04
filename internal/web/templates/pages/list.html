@@ -28,20 +28,53 @@
 </section>
 
 <section class="card">
-  <form class="filters" hx-get="/lists/{{.List.Slug}}/rows" hx-trigger="input delay:250ms, change, search" hx-target="#rows" hx-swap="outerHTML">
+  <form id="filters" class="filters" hx-get="/lists/{{.List.Slug}}/rows" hx-trigger="input delay:250ms, change, search" hx-target="#rows" hx-swap="outerHTML">
     <input type="search" name="q" value="{{.Query}}" placeholder="Поиск по значению или комментарию" autocomplete="off">
     <select name="kind">
       <option value="" {{if eq .Kind ""}}selected{{end}}>все</option>
       <option value="domain" {{if eq .Kind "domain"}}selected{{end}}>домены</option>
       <option value="cidr" {{if eq .Kind "cidr"}}selected{{end}}>подсети</option>
     </select>
+    {{if .CanEdit}}<button class="small-btn" type="button" data-select-mode aria-pressed="false">Выбрать</button>{{end}}
   </form>
   <div class="table-wrap">
-  <table class="entries">
-    <thead><tr><th>Значение</th><th>Тип</th><th>Комментарий</th><th class="meta">Добавил</th><th></th></tr></thead>
+  <table class="entries" id="entries-table">
+    <thead><tr><th class="sel"><input type="checkbox" data-select-all aria-label="Выбрать все показанные"></th><th>Значение</th><th>Тип</th><th>Комментарий</th><th class="meta">Добавил</th><th></th></tr></thead>
     {{template "rows" .Rows}}
   </table>
   </div>
+  {{if .CanEdit}}
+  <form id="bulk-bar" class="bulk-bar" hidden hx-post="/lists/{{.List.Slug}}/entries/bulk"
+    hx-include="#rows .sel input:checked, #filters" hx-target="#rows" hx-swap="outerHTML">
+    <span>Выбрано: <b data-select-count>0</b></span>
+    <button class="small-btn" type="submit" name="op" value="disable" data-bulk disabled>Выключить</button>
+    <button class="small-btn" type="submit" name="op" value="enable" data-bulk disabled>Включить</button>
+    <button class="small-btn danger" type="submit" name="op" value="delete" data-bulk data-confirm-tpl="Удалить выбранные записи ({n})? Это одна версия, её можно откатить в «Истории»." disabled>Удалить</button>
+    <button class="small-btn" type="button" data-select-mode>Готово</button>
+  </form>
+  {{end}}
 </section>
+
+{{if or (and .CanEdit .List.EntryCount) .CanManage}}
+<section class="card">
+  <details class="edit">
+    <summary>Очистить или удалить список</summary>
+    {{if and .CanEdit .List.EntryCount}}
+    <form method="post" action="/lists/{{.List.Slug}}/clear" hx-post="/lists/{{.List.Slug}}/clear"
+      hx-confirm="Удалить все записи ({{.List.EntryCount}}) из «{{.List.Title}}»? Сам список останется. Очистка — одна новая версия, её можно откатить во вкладке «История».">
+      <button class="small-btn danger" type="submit">Очистить список</button>
+      <span class="muted small">удалить все записи, список останется; откатывается через историю</span>
+    </form>
+    {{end}}
+    {{if .CanManage}}
+    <form method="post" action="/lists/{{.List.Slug}}/delete" hx-post="/lists/{{.List.Slug}}/delete"
+      hx-confirm="Удалить список «{{.List.Title}}» насовсем вместе с историей?{{if .FeedCount}} Он подключён к фидам роутеров ({{.FeedCount}}) — его записи сразу пропадут с роутеров.{{end}} Отменить нельзя, вернуть можно только из бэкапа.">
+      <button class="small-btn danger" type="submit">Удалить список</button>
+      <span class="muted small">насовсем, вместе с историей{{if .FeedCount}}; подключён к фидам: {{.FeedCount}}{{end}}</span>
+    </form>
+    {{end}}
+  </details>
+</section>
+{{end}}
 {{end}}
 {{end}}

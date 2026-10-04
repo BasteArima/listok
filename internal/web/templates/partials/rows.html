@@ -1,11 +1,12 @@
 {{define "rows"}}{{if .OOB}}<template>{{end}}{{/* tbody вне <table> парсер выкидывает: для out-of-band htmx 2 требует обёртку <template> */}}<tbody id="rows"{{if .OOB}} hx-swap-oob="true"{{end}}>
 {{range .Rows}}{{template "row" .}}{{else}}
-<tr><td colspan="5" class="muted">{{if .Filtered}}Ничего не найдено.{{else}}Записей пока нет.{{end}}</td></tr>
+<tr><td class="sel"></td><td colspan="5" class="muted">{{if .Filtered}}Ничего не найдено.{{else}}Записей пока нет.{{end}}</td></tr>
 {{end}}
-{{if .Truncated}}<tr><td colspan="5" class="muted small">Показаны первые {{len .Rows}}. Уточните поиск.</td></tr>{{end}}
+{{if .Truncated}}<tr><td class="sel"></td><td colspan="5" class="muted small">Показаны первые {{len .Rows}}. Уточните поиск.</td></tr>{{end}}
 </tbody>{{if .OOB}}</template>{{end}}{{end}}
 
 {{define "row"}}<tr id="entry-{{.E.ID}}" class="{{if not .E.Enabled}}off{{end}}">
+  <td class="sel">{{if .CanEdit}}<input type="checkbox" name="id" value="{{.E.ID}}" aria-label="Выбрать {{.E.Value}}">{{end}}</td>
   <td class="mono value">{{.E.Value}}</td>
   <td><span class="badge">{{kindLabel .E.Kind}}</span></td>
   <td class="comment-cell">{{.E.Comment}}</td>
@@ -23,6 +24,7 @@
 </tr>{{end}}
 
 {{define "row-edit"}}<tr id="entry-{{.E.ID}}" class="editing">
+  <td class="sel"></td>
   <td class="mono value">{{.E.Value}}</td>
   <td><span class="badge">{{kindLabel .E.Kind}}</span></td>
   <td colspan="3">

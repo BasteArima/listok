@@ -75,7 +75,7 @@ CREATE TABLE lists (
   version      INTEGER NOT NULL DEFAULT 0,  -- растёт на каждое изменение содержимого
   created_at   INTEGER NOT NULL,
   updated_at   INTEGER NOT NULL,
-  archived_at  INTEGER
+  archived_at  INTEGER                     -- не используется: удаление списка физическое (D-027)
 );
 
 CREATE TABLE list_members (                 -- владелец хранится в lists.owner_id, здесь остальные
