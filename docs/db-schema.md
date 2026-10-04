@@ -192,6 +192,8 @@ CREATE TABLE routers (
   created_at         INTEGER NOT NULL
 );
 
+-- 0003: routers.agent_mode TEXT ('wait' | 'poll'), routers.agent_interval_s INTEGER — режим агента из hello.
+
 CREATE TABLE feeds (
   id            INTEGER PRIMARY KEY,
   router_id     INTEGER NOT NULL REFERENCES routers(id) ON DELETE CASCADE,

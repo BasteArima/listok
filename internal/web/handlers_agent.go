@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,18 +19,28 @@ import (
 
 // installView — команда установки, показывается один раз сразу после выдачи ссылки.
 type installView struct {
-	Command  string
-	ServerIP string
-	Expires  time.Time
+	Command string
+	Mode    routers.AgentMode
+	Expires time.Time
 }
 
 // installCommand — что выполнить на роутере. С serverIP curl идёт на адрес сервера в LAN (D-028):
 // роутер, обращаясь к собственному внешнему IP, попал бы в свой LuCI.
-func (s *Server) installCommand(token, serverIP string) string {
+func (s *Server) installCommand(token, serverIP string, mode routers.AgentMode) string {
+	q := url.Values{}
+	if serverIP != "" {
+		q.Set("ip", serverIP)
+	}
+	if mode.Mode == routers.ModePoll {
+		q.Set("mode", routers.ModePoll)
+		q.Set("interval", strconv.Itoa(int(mode.Interval.Seconds())))
+	}
 	u := s.Config.BaseURL + "/install/" + token
+	if len(q) > 0 {
+		u += "?" + q.Encode()
+	}
 	resolve := ""
 	if serverIP != "" {
-		u += "?ip=" + url.QueryEscape(serverIP)
 		if pu, err := url.Parse(s.Config.BaseURL); err == nil {
 			port := pu.Port()
 			if port == "" {
@@ -51,9 +62,15 @@ func (s *Server) createInstall(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ip, err := routers.ParseServerIP(r.PostFormValue("server_ip"))
+	form := map[string]string{"server_ip": r.PostFormValue("server_ip"), "mode": r.PostFormValue("mode"), "interval": r.PostFormValue("interval")}
+	ip, err := routers.ParseServerIP(form["server_ip"])
 	if err != nil {
-		s.renderRouter(w, r, rt, http.StatusBadRequest, err.Error(), map[string]string{"server_ip": r.PostFormValue("server_ip")}, nil)
+		s.renderRouter(w, r, rt, http.StatusBadRequest, err.Error(), form, nil)
+		return
+	}
+	mode, err := routers.ParseAgentMode(form["mode"], form["interval"], time.Minute)
+	if err != nil {
+		s.renderRouter(w, r, rt, http.StatusBadRequest, err.Error(), form, nil)
 		return
 	}
 	token, expires, err := s.Routers.CreateInstall(r.Context(), *userFrom(r.Context()), rt.ID)
@@ -67,7 +84,7 @@ func (s *Server) createInstall(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
-	s.renderRouter(w, r, rt, http.StatusOK, "", nil, &installView{Command: s.installCommand(token, ip), ServerIP: ip, Expires: expires})
+	s.renderRouter(w, r, rt, http.StatusOK, "", nil, &installView{Command: s.installCommand(token, ip, mode), Mode: mode, Expires: expires})
 }
 
 // revokeAgent — POST /routers/{id}/agent/revoke: забыть токен агента.
@@ -100,7 +117,13 @@ func shellError(w http.ResponseWriter, status int, msg string) {
 // от curl/wget: браузер или предпросмотр ссылки в мессенджере получают подсказку и ничего не ломают.
 func (s *Server) installScript(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
-	ip, err := routers.ParseServerIP(r.URL.Query().Get("ip"))
+	q := r.URL.Query()
+	ip, err := routers.ParseServerIP(q.Get("ip"))
+	if err != nil {
+		shellError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	mode, err := routers.ParseAgentMode(q.Get("mode"), q.Get("interval"), time.Second)
 	if err != nil {
 		shellError(w, http.StatusBadRequest, err.Error())
 		return
@@ -112,7 +135,7 @@ func (s *Server) installScript(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusNotFound
 		}
 		s.render(w, r, status, "install", page{Title: "Установка агента", Data: map[string]any{
-			"Valid": err == nil, "Router": rt.Name, "Command": s.installCommand(token, ip),
+			"Valid": err == nil, "Router": rt.Name, "Command": s.installCommand(token, ip, mode),
 		}})
 		return
 	}
@@ -128,7 +151,8 @@ func (s *Server) installScript(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
-	p := agent.InstallParams{Server: s.Config.BaseURL, ServerIP: ip, AgentToken: b.AgentToken}
+	p := agent.InstallParams{Server: s.Config.BaseURL, ServerIP: ip, AgentToken: b.AgentToken,
+		Mode: mode.Mode, IntervalS: int(mode.Interval.Seconds())}
 	for _, f := range b.Feeds {
 		p.Feeds = append(p.Feeds, agent.Feed{Section: f.Section, Token: f.Token})
 	}
@@ -170,11 +194,16 @@ type helloRequest struct {
 	AgentVersion   string   `json:"agent_version"`
 	ForkopVersion  string   `json:"forkop_version"`
 	SingboxVersion string   `json:"singbox_version"`
+	Mode           string   `json:"mode"`
+	IntervalS      int      `json:"interval_s"`
 	Sections       []string `json:"sections"`
 }
 
+// helloFeed — фид в ответе hello. token нужен агенту, чтобы подхватить перевыпущенную ссылку:
+// он аутентифицирован своим токеном, ссылка фида ему и так положена.
 type helloFeed struct {
 	Section string `json:"section"`
+	Token   string `json:"token"`
 	URL     string `json:"url"`
 }
 
@@ -197,6 +226,7 @@ func (s *Server) agentHello(w http.ResponseWriter, r *http.Request) {
 	}
 	feeds, err := s.Routers.Hello(r.Context(), rt, s.clientIP(r), store.AgentInfo{
 		AgentVersion: req.AgentVersion, ForkopVersion: req.ForkopVersion, SingboxVersion: req.SingboxVersion,
+		Mode: req.Mode, IntervalS: req.IntervalS,
 	})
 	if err != nil {
 		s.serverError(w, err)
@@ -204,7 +234,7 @@ func (s *Server) agentHello(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := helloResponse{Feeds: []helloFeed{}, AgentVersion: agent.Version, ReportIntervalS: 300}
 	for _, f := range feeds {
-		resp.Feeds = append(resp.Feeds, helloFeed{Section: f.Section, URL: s.feedURL(f.Token)})
+		resp.Feeds = append(resp.Feeds, helloFeed{Section: f.Section, Token: f.Token, URL: s.feedURL(f.Token)})
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
@@ -240,4 +270,48 @@ func (s *Server) agentApplied(w http.ResponseWriter, r *http.Request) {
 		s.Log.Warn("агент не смог применить фид", "router", rt.Name, "section", req.Section, "error", req.Error)
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type waitRequest struct {
+	Feeds map[string]string `json:"feeds"` // секция → ETag, который есть у агента
+	Wait  int               `json:"wait"`  // секунд; 0 — ответить сразу (режим poll)
+}
+
+type waitResponse struct {
+	Changed []string `json:"changed"`
+	Gone    []string `json:"gone"`
+}
+
+// agentWait — POST /agent/v1/wait: long-poll по всем секциям роутера сразу.
+func (s *Server) agentWait(w http.ResponseWriter, r *http.Request) {
+	rt, ok := s.agentAuth(w, r)
+	if !ok {
+		return
+	}
+	var req waitRequest
+	if !readJSON(w, r, &req) {
+		return
+	}
+	wait := min(time.Duration(max(req.Wait, 0))*time.Second, s.Config.LongPollMax)
+	res, err := s.Routers.Wait(r.Context(), rt, s.clientIP(r), req.Feeds, wait)
+	if errors.Is(err, routers.ErrBadReport) {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if r.Context().Err() != nil {
+		return // агент ушёл, не дождавшись
+	}
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	resp := waitResponse{Changed: res.Changed, Gone: res.Gone}
+	if resp.Changed == nil {
+		resp.Changed = []string{}
+	}
+	if resp.Gone == nil {
+		resp.Gone = []string{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }

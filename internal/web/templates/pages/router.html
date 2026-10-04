@@ -38,6 +38,7 @@
     {{if .Router.HasAgent}}
     <div class="stats muted small">
       <div>агент {{or .Router.AgentVersion "—"}}{{if and .Router.AgentVersion (ne .Router.AgentVersion .AgentVersion)}} <span class="warn">(есть {{.AgentVersion}})</span>{{end}}</div>
+      {{if eq .Router.AgentMode "poll"}}<div>проверка раз в {{minutes .Router.AgentIntervalS}} мин</div>{{else if eq .Router.AgentMode "wait"}}<div>мгновенно (long-poll)</div>{{end}}
       {{with .Router.ForkopVersion}}<div>forkop {{.}}</div>{{end}}
       {{with .Router.SingboxVersion}}<div>sing-box {{.}}</div>{{end}}
       {{with .Router.LastIP}}<div class="mono">{{.}}</div>{{end}}
@@ -52,12 +53,22 @@
       <input class="mono" readonly value="{{.Command}}" id="install-cmd">
       <button class="small-btn" type="button" data-copy="install-cmd">Копировать</button>
     </div>
-    <p class="muted small">Установщик сделает бэкап настроек forkop, заменит ссылки на фиды listok локальными файлами и один раз перезапустит forkop. Дальше изменения доезжают за секунды, без перезапуска sing-box.</p>
+    <p class="muted small">Установщик сделает бэкап настроек forkop, заменит ссылки на фиды listok локальными файлами и один раз перезапустит forkop (при переустановке — только если настройки forkop меняются). Дальше изменения доезжают {{if eq .Mode.Mode "poll"}}при проверке раз в {{minutes (seconds .Mode.Interval)}} мин{{else}}за секунды{{end}}, без перезапуска sing-box.</p>
   </div>
   {{else}}
   <details class="edit"{{if $.Form.server_ip}} open{{end}}>
     <summary>{{if .Router.HasAgent}}Переустановить агент{{else}}Установить агент{{end}}</summary>
     <form class="form-grid" method="post" action="/routers/{{.Router.ID}}/install">
+      <label>Режим
+        <select name="mode">
+          <option value="wait" {{if ne $.Form.mode "poll"}}selected{{end}}>мгновенно (держит соединение)</option>
+          <option value="poll" {{if eq $.Form.mode "poll"}}selected{{end}}>экономно (проверка раз в N минут)</option>
+        </select>
+      </label>
+      <label>N, минут <span class="muted">(для экономного)</span>
+        <input name="interval" type="number" min="1" max="1440" value="{{or $.Form.interval "5"}}">
+      </label>
+      <p class="wide muted small">«Мгновенно»: изменения доходят за секунды, агент держит одно соединение с сервером (~5 МБ памяти, раз в минуту TLS-рукопожатие). «Экономно» — для слабых роутеров: одна короткая проверка раз в N минут.</p>
       <label class="wide">IP сервера listok в сети роутера <span class="muted">(необязательно)</span>
         <input name="server_ip" value="{{$.Form.server_ip}}" placeholder="например 192.168.1.10" autocomplete="off" spellcheck="false">
         <span class="muted small">Нужно, если роутер в той же сети, что и сервер listok: обращаясь к своему внешнему адресу, роутер попадает в собственный LuCI. Для роутера в другой сети оставьте пустым.</span>

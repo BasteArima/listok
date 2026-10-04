@@ -40,6 +40,8 @@ type InstallParams struct {
 	ServerIP   string // необязательно: адрес сервера в сети роутера (D-028)
 	AgentToken string
 	Feeds      []Feed
+	Mode       string // wait или poll
+	IntervalS  int    // для poll
 }
 
 var tmpl = template.Must(template.New("install").Delims("[[", "]]").Parse(installTmpl))

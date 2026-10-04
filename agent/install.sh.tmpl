@@ -38,6 +38,10 @@ config agent 'agent'
 	option server_ip '[[.ServerIP]]'
 [[- end]]
 	option token '[[.AgentToken]]'
+	option mode '[[.Mode]]'
+[[- if eq .Mode "poll"]]
+	option interval '[[.IntervalS]]'
+[[- end]]
 [[range .Feeds]]
 config feed
 	option section '[[.Section]]'
@@ -53,23 +57,32 @@ done
 
 # В forkop: ссылки на фиды listok (если их вставляли вручную) заменяются локальными файлами.
 # Локальный путь forkop читает синхронно при старте, без гонки, как у ссылок (forkop-integration.md).
+# Если нужное уже стоит (переустановка), forkop не трогаем и не перезапускаем.
+changed=0
 for s in $SECTIONS; do
+	cur=$(uci -q get "forkop.$s.domain_ip_lists" || true)
 	keep=""
-	for v in $(uci -q get "forkop.$s.domain_ip_lists"); do
+	for v in $cur; do
 		case "$v" in
 			"$SERVER"/f/*) say "секция $s: ссылка на фид заменена локальным файлом" ;;
 			"/etc/listok/$s.lst") ;;
 			*) keep="$keep $v" ;;
 		esac
 	done
+	want=$(echo $keep /etc/listok/$s.lst)
+	[ "$(echo $cur)" = "$want" ] && continue
 	uci -q delete "forkop.$s.domain_ip_lists" || true
-	for v in $keep; do uci add_list "forkop.$s.domain_ip_lists=$v"; done
-	uci add_list "forkop.$s.domain_ip_lists=/etc/listok/$s.lst"
+	for v in $want; do uci add_list "forkop.$s.domain_ip_lists=$v"; done
+	changed=1
 done
-uci commit forkop
 
-say "перезапуск forkop (единственный: дальше списки обновляются без перезапуска sing-box)"
-/etc/init.d/forkop reload
+if [ "$changed" = 1 ]; then
+	uci commit forkop
+	say "перезапуск forkop (единственный: дальше списки обновляются без перезапуска sing-box)"
+	/etc/init.d/forkop reload
+else
+	say "настройки forkop уже верные, перезапуск не нужен"
+fi
 /etc/init.d/listok-agent enable
 /etc/init.d/listok-agent restart
 

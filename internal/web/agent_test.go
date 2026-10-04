@@ -235,3 +235,138 @@ func TestPublicRateLimit(t *testing.T) {
 		}
 	}
 }
+
+// installAgent выдаёт ссылку установки, «запускает» её как curl и возвращает токен агента и установщик.
+func installAgent(t *testing.T, e *env, routerPath string, form url.Values) (string, string) {
+	t.Helper()
+	page := body(t, e.post(t, routerPath+"/install", form))
+	m := regexp.MustCompile(`/install/[0-9A-Za-z]{43}(\?[^&#]*(&amp;[^&#']*)*)?`).FindString(page)
+	if m == "" {
+		t.Fatalf("нет команды установки:\n%s", page)
+	}
+	_, script := getUA(t, e, html.UnescapeString(m), "curl/8.12.1")
+	at := regexp.MustCompile(`config agent 'agent'[\s\S]*?option token '([0-9A-Za-z]{43})'`).FindStringSubmatch(script)
+	if at == nil {
+		t.Fatalf("в установщике нет токена агента:\n%s", script)
+	}
+	return at[1], script
+}
+
+func agentWait(t *testing.T, e *env, token string, feeds map[string]string, wait int) (waitResponse, time.Duration, int) {
+	t.Helper()
+	start := time.Now()
+	r, b := agentPost(t, e, token, "/agent/v1/wait", map[string]any{"feeds": feeds, "wait": wait})
+	var resp waitResponse
+	if r.StatusCode == http.StatusOK {
+		if err := json.Unmarshal([]byte(b), &resp); err != nil {
+			t.Fatalf("ответ wait: %v\n%s", err, b)
+		}
+	}
+	return resp, time.Since(start), r.StatusCode
+}
+
+func TestAgentWaitAllSections(t *testing.T) {
+	e := newEnv(t, "admin", "long-enough-pass")
+	e.login(t, "admin", "long-enough-pass")
+	ctx := context.Background()
+	for _, l := range []string{"main", "geo"} {
+		expectRedirect(t, e.post(t, "/lists", url.Values{"title": {l}, "slug": {"l" + l}}), "/lists/l"+l)
+		e.do(t, "POST", "/lists/l"+l+"/entries", url.Values{"input": {l + ".example"}})
+	}
+	routerPath, mainToken, _ := setupRouter(t, e, "lmain")
+	var geoListID int64
+	e.srv.DB.QueryRowContext(ctx, `SELECT id FROM lists WHERE slug = 'lgeo'`).Scan(&geoListID)
+	expectRedirect(t, e.post(t, routerPath+"/feeds", url.Values{"section": {"geo"}, "list": {itoa(geoListID)}}), routerPath)
+	agentToken, _ := installAgent(t, e, routerPath, url.Values{})
+
+	etagOf := func(section string) string {
+		var token string
+		e.srv.DB.QueryRowContext(ctx, `SELECT token FROM feeds WHERE section = ?`, section).Scan(&token)
+		r, _ := fetchFeed(t, e, token, "")
+		return r.Header.Get("ETag")
+	}
+	cur := map[string]string{"main": etagOf("main"), "geo": etagOf("geo")}
+
+	// Без изменений: ждёт и отвечает пустым списком. wait = 0 (режим poll) — сразу.
+	resp, took, code := agentWait(t, e, agentToken, cur, 1)
+	if code != 200 || len(resp.Changed)+len(resp.Gone) != 0 || took < 900*time.Millisecond {
+		t.Fatalf("без изменений: %d %+v за %v", code, resp, took)
+	}
+	if resp, took, _ := agentWait(t, e, agentToken, cur, 0); len(resp.Changed) != 0 || took > 500*time.Millisecond {
+		t.Fatalf("poll: %+v за %v", resp, took)
+	}
+
+	// Изменение одной секции во время ожидания — ответ сразу и только про неё.
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		e.do(t, "POST", "/lists/lgeo/entries", url.Values{"input": {"geo2.example"}})
+	}()
+	resp, took, _ = agentWait(t, e, agentToken, cur, 5)
+	if strings.Join(resp.Changed, ",") != "geo" || took > 3*time.Second {
+		t.Fatalf("изменилась geo: %+v за %v", resp, took)
+	}
+
+	// Обе устарели — обе в ответе, без ожидания.
+	if resp, _, _ := agentWait(t, e, agentToken, map[string]string{"main": `"old"`, "geo": `"old"`}, 5); strings.Join(resp.Changed, ",") != "geo,main" {
+		t.Fatalf("обе устарели: %+v", resp)
+	}
+
+	// Выключенный фид — «пропал».
+	var geoFeed int64
+	e.srv.DB.QueryRowContext(ctx, `SELECT id FROM feeds WHERE section = 'geo'`).Scan(&geoFeed)
+	e.post(t, "/feeds/"+itoa(geoFeed)+"/toggle", url.Values{"enabled": {"0"}})
+	cur["geo"] = etagOf("geo")
+	if resp, _, _ := agentWait(t, e, agentToken, map[string]string{"main": etagOf("main"), "geo": `"x"`}, 5); strings.Join(resp.Gone, ",") != "geo" {
+		t.Fatalf("выключенный фид: %+v", resp)
+	}
+
+	// Ошибки запроса.
+	if _, _, code := agentWait(t, e, agentToken, map[string]string{}, 0); code != http.StatusBadRequest {
+		t.Fatalf("пустой список секций: %d", code)
+	}
+	if _, _, code := agentWait(t, e, agentToken, map[string]string{"bad name": ""}, 0); code != http.StatusBadRequest {
+		t.Fatalf("плохая секция: %d", code)
+	}
+	if _, _, code := agentWait(t, e, "wrong", cur, 0); code != http.StatusUnauthorized {
+		t.Fatalf("чужой токен: %d", code)
+	}
+
+	// hello отдаёт токены фидов (агент подхватывает перевыпущенную ссылку) и запоминает режим.
+	var mainFeed int64
+	e.srv.DB.QueryRowContext(ctx, `SELECT id FROM feeds WHERE section = 'main'`).Scan(&mainFeed)
+	e.do(t, "POST", "/feeds/"+itoa(mainFeed)+"/regenerate", nil)
+	r, b := agentPost(t, e, agentToken, "/agent/v1/hello", map[string]any{"agent_version": agent.Version, "mode": "poll", "interval_s": 600})
+	var hello helloResponse
+	json.Unmarshal([]byte(b), &hello)
+	if r.StatusCode != 200 || len(hello.Feeds) != 1 || hello.Feeds[0].Token == "" || hello.Feeds[0].Token == mainToken {
+		t.Fatalf("hello после перевыпуска: %d %s", r.StatusCode, b)
+	}
+	mustContain(t, body(t, e.get(t, routerPath)), "проверка раз в 10 мин")
+}
+
+func TestInstallModes(t *testing.T) {
+	e := newEnv(t, "admin", "long-enough-pass")
+	e.login(t, "admin", "long-enough-pass")
+	expectRedirect(t, e.post(t, "/lists", url.Values{"title": {"Общий"}, "slug": {"common"}}), "/lists/common")
+	routerPath, _, _ := setupRouter(t, e, "common")
+
+	if r := e.post(t, routerPath+"/install", url.Values{"mode": {"poll"}, "interval": {"0"}}); r.StatusCode != http.StatusBadRequest {
+		t.Fatalf("интервал 0: %d", r.StatusCode)
+	}
+	page := body(t, e.post(t, routerPath+"/install", url.Values{"mode": {"poll"}, "interval": {"10"}}))
+	mustContain(t, page, "mode=poll", "interval=600", "при проверке раз в 10 мин")
+	_, script := installAgent(t, e, routerPath, url.Values{"mode": {"poll"}, "interval": {"10"}})
+	mustContain(t, script, "\toption mode 'poll'\n\toption interval '600'\n")
+	_, script = installAgent(t, e, routerPath, url.Values{})
+	mustContain(t, script, "\toption mode 'wait'\n")
+	_, cfg, _ := strings.Cut(script, "cat > /etc/config/listok <<'LISTOK_CONFIG_EOF'")
+	if cfg, _, _ = strings.Cut(cfg, "LISTOK_CONFIG_EOF"); strings.Contains(cfg, "interval") {
+		t.Errorf("в мгновенном режиме интервал не нужен:\n%s", cfg)
+	}
+	// Подделанный режим в ссылке — ошибка, а не установка.
+	page = body(t, e.post(t, routerPath+"/install", url.Values{}))
+	tok := installTokenRe.FindStringSubmatch(page)[1]
+	if r, _ := getUA(t, e, "/install/"+tok+"?mode=fast", "curl/8.12.1"); r.StatusCode != http.StatusBadRequest {
+		t.Fatalf("подделанный режим: %d", r.StatusCode)
+	}
+}

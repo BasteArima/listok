@@ -23,6 +23,7 @@ func TestInstallScript(t *testing.T) {
 			{Section: "main", Token: "MainTokenMainTokenMainTokenMainTokenMain123"},
 			{Section: "geo", Token: "GeoTokenGeoTokenGeoTokenGeoTokenGeoToken123"},
 		},
+		Mode: "wait",
 	}
 	b, err := Install(p)
 	if err != nil {
@@ -33,12 +34,15 @@ func TestInstallScript(t *testing.T) {
 		"SERVER='https://listok.example.com'",
 		"SECTIONS='main geo'",
 		"\toption server 'https://listok.example.com'\n\toption server_ip '192.168.1.10'\n\toption token 'AgentToken",
+		"\toption mode 'wait'\n\nconfig feed",
 		"\toption section 'main'\n\toption token 'MainToken",
 		"\toption section 'geo'\n\toption token 'GeoToken",
 		"const VERSION = '" + Version + "';",
 		"\nLISTOK_AGENT_EOF\n", "\nLISTOK_INIT_EOF\n", "\nLISTOK_CONFIG_EOF\n",
 		"cp /etc/config/forkop \"/etc/config/forkop.bak-listok-$STAMP\"",
-		"uci add_list \"forkop.$s.domain_ip_lists=/etc/listok/$s.lst\"",
+		"want=$(echo $keep /etc/listok/$s.lst)",
+		"for v in $want; do uci add_list \"forkop.$s.domain_ip_lists=$v\"; done",
+		"настройки forkop уже верные, перезапуск не нужен",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("в установщике нет %q", want)
@@ -52,11 +56,13 @@ func TestInstallScript(t *testing.T) {
 	}
 
 	// Без IP сервера строки server_ip в конфиге нет вовсе (в коде агента это слово есть, его не смотрим).
-	p.ServerIP = ""
+	// Режим poll добавляет интервал.
+	p.ServerIP, p.Mode, p.IntervalS = "", "poll", 600
 	b, _ = Install(p)
 	_, cfg, _ := strings.Cut(string(b), "cat > /etc/config/listok <<'LISTOK_CONFIG_EOF'")
 	cfg, _, _ = strings.Cut(cfg, "LISTOK_CONFIG_EOF")
-	if !strings.Contains(cfg, "option token 'AgentToken") || strings.Contains(cfg, "server_ip") {
+	if !strings.Contains(cfg, "option token 'AgentToken") || strings.Contains(cfg, "server_ip") ||
+		!strings.Contains(cfg, "\toption mode 'poll'\n\toption interval '600'\n") {
 		t.Errorf("конфиг без адреса сервера:\n%s", cfg)
 	}
 

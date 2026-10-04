@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -36,6 +38,44 @@ func ParseServerIP(v string) (string, error) {
 		return "", ErrBadServerIP
 	}
 	return a.String(), nil
+}
+
+// Режимы агента. wait — long-poll (изменения за секунды), poll — проверка раз в interval (для слабых роутеров).
+const (
+	ModeWait = "wait"
+	ModePoll = "poll"
+
+	MinPollInterval     = time.Minute
+	MaxPollInterval     = 24 * time.Hour
+	DefaultPollInterval = 5 * time.Minute
+)
+
+var ErrBadMode = errors.New("режим агента: «мгновенно» или «раз в N минут», N от 1 до 1440")
+
+// AgentMode — режим агента для установщика.
+type AgentMode struct {
+	Mode     string
+	Interval time.Duration // только для poll
+}
+
+// ParseAgentMode разбирает режим и интервал опроса в минутах (форма) или секундах (ссылка установки).
+func ParseAgentMode(mode, interval string, unit time.Duration) (AgentMode, error) {
+	mode = strings.TrimSpace(mode)
+	switch mode {
+	case "", ModeWait:
+		return AgentMode{Mode: ModeWait}, nil
+	case ModePoll:
+		n, err := strconv.Atoi(strings.TrimSpace(interval))
+		if interval == "" {
+			return AgentMode{Mode: ModePoll, Interval: DefaultPollInterval}, nil
+		}
+		d := time.Duration(n) * unit
+		if err != nil || d < MinPollInterval || d > MaxPollInterval {
+			return AgentMode{}, ErrBadMode
+		}
+		return AgentMode{Mode: ModePoll, Interval: d}, nil
+	}
+	return AgentMode{}, ErrBadMode
 }
 
 // CreateInstall выдаёт одноразовую ссылку установки агента на InstallTTL. Прежняя ссылка перестаёт работать.
@@ -124,8 +164,8 @@ func (s *Service) Agent(ctx context.Context, token string) (store.Router, error)
 
 // HelloFeed — фид в ответе hello.
 type HelloFeed struct {
-	Section string `json:"section"`
-	Token   string `json:"-"`
+	Section string
+	Token   string
 }
 
 // clip — строка из отчёта агента: без управляющих символов, не длиннее n рун.
@@ -142,10 +182,18 @@ func clip(v string, n int) string {
 	return v
 }
 
-// Hello отмечает агента живым, запоминает версии и возвращает включённые фиды роутера.
+// Hello отмечает агента живым, запоминает версии и режим и возвращает включённые фиды роутера.
 func (s *Service) Hello(ctx context.Context, r store.Router, ip string, info store.AgentInfo) ([]HelloFeed, error) {
+	mode := info.Mode
+	if mode != "wait" && mode != "poll" {
+		mode = ""
+	}
+	interval := info.IntervalS
+	if interval < 0 || interval > 7*24*3600 {
+		interval = 0
+	}
 	info = store.AgentInfo{AgentVersion: clip(info.AgentVersion, 40), ForkopVersion: clip(info.ForkopVersion, 60),
-		SingboxVersion: clip(info.SingboxVersion, 60)}
+		SingboxVersion: clip(info.SingboxVersion, 60), Mode: mode, IntervalS: interval}
 	if err := s.st.TouchAgent(ctx, r.ID, s.now(), ip, info); err != nil {
 		return nil, err
 	}
@@ -182,4 +230,74 @@ func (s *Service) Applied(ctx context.Context, r store.Router, ip, section, etag
 		return err
 	}
 	return s.st.TouchAgent(ctx, r.ID, s.now(), ip, store.AgentInfo{})
+}
+
+// WaitResult — какие секции агента изменились или пропали (фид удалён, выключен или его ссылку перевыпустили).
+type WaitResult struct {
+	Changed []string
+	Gone    []string
+}
+
+// Wait — long-poll по всем секциям роутера сразу (POST /agent/v1/wait). etags — версии, которые
+// есть у агента, по секциям. Отвечает, как только изменилась или пропала хоть одна секция,
+// либо по истечении wait (тогда результат пустой). wait = 0 — проверить и ответить сразу (режим poll).
+// Одно ожидание на роутер вместо отдельного на секцию: один curl на роутере.
+func (s *Service) Wait(ctx context.Context, r store.Router, ip string, etags map[string]string, wait time.Duration) (WaitResult, error) {
+	if len(etags) == 0 || len(etags) > 64 {
+		return WaitResult{}, ErrBadReport
+	}
+	for section := range etags {
+		if !sectionRe.MatchString(section) {
+			return WaitResult{}, ErrBadReport
+		}
+	}
+	if err := s.st.TouchAgent(ctx, r.ID, s.now(), ip, store.AgentInfo{}); err != nil {
+		return WaitResult{}, err
+	}
+	var deadline <-chan time.Time
+	if wait > 0 {
+		t := time.NewTimer(wait)
+		defer t.Stop()
+		deadline = t.C
+	}
+	for {
+		woke := s.notifier.Wait() // до сборки, как в Serve
+		feeds, err := s.st.FeedsByRouter(ctx, r.ID)
+		if err != nil {
+			return WaitResult{}, err
+		}
+		bySection := make(map[string]store.Feed, len(feeds))
+		for _, f := range feeds {
+			if f.Enabled {
+				bySection[f.Section] = f
+			}
+		}
+		var res WaitResult
+		for section, etag := range etags {
+			f, ok := bySection[section]
+			if !ok {
+				res.Gone = append(res.Gone, section)
+				continue
+			}
+			c, err := s.builder.Build(ctx, f)
+			if err != nil {
+				return WaitResult{}, err
+			}
+			if !etagMatch(etag, c.ETag) {
+				res.Changed = append(res.Changed, section)
+			}
+		}
+		if len(res.Changed) > 0 || len(res.Gone) > 0 || deadline == nil {
+			slices.Sort(res.Changed)
+			slices.Sort(res.Gone)
+			return res, nil
+		}
+		select {
+		case <-woke:
+		case <-ctx.Done():
+			return WaitResult{}, ctx.Err()
+		case <-deadline:
+			return WaitResult{}, nil
+		}
+	}
 }

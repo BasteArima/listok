@@ -77,8 +77,11 @@ var funcs = template.FuncMap{
 		}
 		return string(w)
 	},
-	"ago":  ago,
-	"tabs": func(slug, active string) map[string]string { return map[string]string{"Slug": slug, "Active": active} },
+	"ago": ago,
+	// minutes — секунды → целые минуты (интервал опроса агента); seconds — Duration → секунды.
+	"minutes": func(sec int) int { return (sec + 30) / 60 },
+	"seconds": func(d time.Duration) int { return int(d.Seconds()) },
+	"tabs":    func(slug, active string) map[string]string { return map[string]string{"Slug": slug, "Active": active} },
 	"deref": func(p *string) string {
 		if p == nil {
 			return ""

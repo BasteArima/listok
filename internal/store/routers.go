@@ -29,6 +29,8 @@ type Router struct {
 	LastSeenAt       *time.Time // последний запрос агента к /agent/v1
 	LastIP           string
 	InstallExpiresAt *time.Time // ссылка установки ждёт использования до этого момента
+	AgentMode        string     // wait — long-poll, poll — проверка раз в AgentIntervalS (из hello)
+	AgentIntervalS   int
 }
 
 const routerSelect = `
@@ -37,7 +39,8 @@ const routerSelect = `
 	       (SELECT count(*) FROM feeds f WHERE f.router_id = r.id),
 	       r.agent_token_hash IS NOT NULL, coalesce(r.agent_version, ''), coalesce(r.forkop_version, ''),
 	       coalesce(r.singbox_version, ''), r.last_seen_at, coalesce(r.last_ip, ''),
-	       CASE WHEN r.install_token_hash IS NOT NULL THEN r.install_expires_at END
+	       CASE WHEN r.install_token_hash IS NOT NULL THEN r.install_expires_at END,
+	       coalesce(r.agent_mode, ''), coalesce(r.agent_interval_s, 0)
 	FROM routers r JOIN users u ON u.id = r.owner_id`
 
 func scanRouter(row interface{ Scan(...any) error }) (Router, error) {
@@ -45,7 +48,8 @@ func scanRouter(row interface{ Scan(...any) error }) (Router, error) {
 	var created int64
 	var last, seen, install sql.NullInt64
 	err := row.Scan(&r.ID, &r.Name, &r.OwnerID, &r.OwnerName, &r.Notes, &created, &last, &r.FeedCount,
-		&r.HasAgent, &r.AgentVersion, &r.ForkopVersion, &r.SingboxVersion, &seen, &r.LastIP, &install)
+		&r.HasAgent, &r.AgentVersion, &r.ForkopVersion, &r.SingboxVersion, &seen, &r.LastIP, &install,
+		&r.AgentMode, &r.AgentIntervalS)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Router{}, ErrNotFound
 	}

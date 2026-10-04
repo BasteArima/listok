@@ -1,10 +1,14 @@
 #!/usr/bin/ucode
 // listok-agent — агент listok на роутере с forkop. Описание: docs/router-agent.md.
 //
-//   listok-agent run <секция>   цикл синхронизации одной секции (его запускает procd)
+//   listok-agent run            цикл синхронизации всех секций (его запускает procd)
 //   listok-agent sync <секция>  одна загрузка фида без forkop list_update (для установщика)
 //   listok-agent status         что настроено и что лежит на роутере
 //   listok-agent uninstall      убрать агент и его файлы из forkop
+//
+// Режимы (option mode в /etc/config/listok):
+//   wait — POST /agent/v1/wait держит одно соединение на все секции, изменения за секунды;
+//   poll — та же проверка без ожидания раз в option interval секунд (для слабых роутеров).
 //
 // Для проверки без изменений на роутере: LISTOK_UCI_DIR, LISTOK_STATE_DIR, LISTOK_TMP_DIR
 // переносят конфиг и файлы в другой каталог, LISTOK_DRY_RUN=1 не вызывает forkop.
@@ -13,7 +17,7 @@
 import * as fs from 'fs';
 import { cursor } from 'uci';
 
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 const UCI_DIR = getenv('LISTOK_UCI_DIR') || '/etc/config';
 const STATE_DIR = getenv('LISTOK_STATE_DIR') || '/etc/listok';
 const TMP_DIR = getenv('LISTOK_TMP_DIR') || '/tmp/listok';
@@ -24,7 +28,8 @@ const FORKOP = '/usr/bin/forkop';
 const FORKOP_PID = '/var/run/forkop_list_update.pid';
 const RULESET_DIR = '/tmp/sing-box/rulesets';
 const SENTINEL = 'listok-sentinel.invalid';
-const WAIT_S = 55;            // long-poll: сервер держит запрос до стольких секунд
+const WAIT_S = 55;            // wait: сервер держит запрос до стольких секунд (не больше LISTOK_LONGPOLL_MAX)
+const POLL_DEFAULT_S = 300;
 const BACKOFF_MAX_S = 300;
 
 function log(level, msg) {
@@ -55,16 +60,22 @@ function run(args) {
 
 function config() {
 	let c = cursor(UCI_DIR);
+	let mode = c.get('listok', 'agent', 'mode') || 'wait';
 	let cfg = {
 		server: c.get('listok', 'agent', 'server'),
 		server_ip: c.get('listok', 'agent', 'server_ip') || '',
 		proxy: c.get('listok', 'agent', 'proxy') || '',
 		token: c.get('listok', 'agent', 'token'),
-		feeds: {}
+		mode: mode == 'poll' ? 'poll' : 'wait',
+		interval: max(int(c.get('listok', 'agent', 'interval') || POLL_DEFAULT_S) || POLL_DEFAULT_S, 60),
+		feeds: {},
+		uci_names: {}
 	};
 	c.foreach('listok', 'feed', function(s) {
-		if (s.section && s.token)
+		if (s.section && s.token) {
 			cfg.feeds[s.section] = s.token;
+			cfg.uci_names[s.section] = s['.name'];
+		}
 	});
 	if (!cfg.server || !cfg.token)
 		die('в /etc/config/listok нет server или token');
@@ -87,25 +98,23 @@ function curl_base(cfg) {
 	return args;
 }
 
-// fetch — запрос фида. Возвращает {code, etag, body}; code 0 — сеть недоступна.
-function fetch(cfg, section, etag, wait) {
+// fetch — скачать фид секции. Возвращает {code, etag, body}; code 0 — сеть недоступна.
+function fetch(cfg, section) {
 	fs.mkdir(TMP_DIR);
 	let body = TMP_DIR + '/' + section + '.body', hdr = TMP_DIR + '/' + section + '.hdr';
 	fs.unlink(body);
 	fs.unlink(hdr);
 	let args = curl_base(cfg);
-	push(args, '-o', body, '-D', hdr, '-w', '%{http_code}', '-m', '' + (wait + 25));
-	if (etag)
-		push(args, '-H', 'If-None-Match: ' + etag);
-	push(args, cfg.server + '/f/' + cfg.feeds[section] + '.lst' + (wait > 0 ? '?wait=' + wait : ''));
+	push(args, '-o', body, '-D', hdr, '-w', '%{http_code}', '-m', '60',
+		cfg.server + '/f/' + cfg.feeds[section] + '.lst');
 	let code = int(trim(run(args))) || 0;
-	let newEtag = '';
+	let etag = '';
 	for (let line in split(fs.readfile(hdr) || '', '\n')) {
 		let m = match(trim(line), /^etag:[ \t]*(.+)$/i);
 		if (m)
-			newEtag = trim(m[1]);
+			etag = trim(m[1]);
 	}
-	return { code: code, etag: newEtag, body: body };
+	return { code: code, etag: etag, body: body };
 }
 
 // validate — фид похож на настоящий: первой строкой сторожевая запись, дальше домены и подсети.
@@ -131,17 +140,23 @@ function list_path(section) {
 	return STATE_DIR + '/' + section + '.lst';
 }
 
+function etag_of(section) {
+	return trim(fs.readfile(STATE_DIR + '/' + section + '.etag') || '');
+}
+
 // store — положить фид на место атомарно. На флеш пишем только при реальном изменении.
 function store(section, path, etag) {
 	let text = fs.readfile(path);
 	let target = list_path(section);
 	fs.mkdir(STATE_DIR);
-	if (fs.readfile(target) == text)
-		return false;
-	fs.writefile(target + '.new', text);
-	fs.rename(target + '.new', target);
-	fs.writefile(STATE_DIR + '/' + section + '.etag', etag + '\n');
-	return true;
+	let changed = fs.readfile(target) != text;
+	if (changed) {
+		fs.writefile(target + '.new', text);
+		fs.rename(target + '.new', target);
+	}
+	if (etag_of(section) != etag)
+		fs.writefile(STATE_DIR + '/' + section + '.etag', etag + '\n');
+	return changed;
 }
 
 function forkop_busy() {
@@ -149,37 +164,54 @@ function forkop_busy() {
 	return pid != '' && fs.access('/proc/' + pid);
 }
 
-// apply — forkop list_update. Код выхода ничего не говорит: при чужом обновлении forkop
-// пишет «уже идёт» и выходит с 0. Поэтому успех — rule-set секции пересобран после нашего вызова.
-function apply(section) {
-	if (DRY_RUN)
-		return { ok: true };
-	let ruleset = RULESET_DIR + '/' + section + '-lists-ruleset.json';
-	for (let attempt = 1; attempt <= 3; attempt++) {
+// apply — один forkop list_update на все изменившиеся секции (он и так обновляет все разом).
+// Код выхода ничего не говорит (D-029): успех секции — её rule-set пересобран после вызова.
+// Возвращает {секция: {ok, error}}.
+function apply(sections) {
+	let res = {};
+	if (DRY_RUN) {
+		for (let s in sections)
+			res[s] = { ok: true };
+		return res;
+	}
+	let pending = sections;
+	for (let attempt = 1; attempt <= 3 && length(pending); attempt++) {
 		for (let i = 0; i < 100 && forkop_busy(); i++)
 			sleep(3000);
 		let t0 = time();
 		system([ FORKOP, 'list_update' ], 600000);
-		let st = fs.stat(ruleset);
-		if (st && st.mtime >= t0 && index(fs.readfile(ruleset) || '', SENTINEL) >= 0)
-			return { ok: true };
-		sleep(10000);
+		let left = [];
+		for (let s in pending) {
+			let ruleset = RULESET_DIR + '/' + s + '-lists-ruleset.json';
+			let st = fs.stat(ruleset);
+			if (st && st.mtime >= t0 && index(fs.readfile(ruleset) || '', SENTINEL) >= 0)
+				res[s] = { ok: true };
+			else
+				push(left, s);
+		}
+		pending = left;
+		if (length(pending))
+			sleep(10000);
 	}
-	return { ok: false, error: 'forkop list_update не пересобрал rule-set секции ' + section };
+	for (let s in pending)
+		res[s] = { ok: false, error: 'forkop list_update не пересобрал rule-set секции ' + s };
+	return res;
 }
 
-function post(cfg, path, payload) {
+// post — JSON-запрос к /agent/v1. Возвращает {code, body}; code 0 — сеть недоступна.
+function post(cfg, path, payload, timeout) {
 	fs.mkdir(TMP_DIR);
-	let file = TMP_DIR + '/post.json';
+	let file = TMP_DIR + '/post.json', out = TMP_DIR + '/post.out';
 	fs.writefile(file, sprintf('%J', payload));
+	fs.unlink(out);
 	let args = curl_base(cfg);
-	push(args, '-m', '15', '-o', TMP_DIR + '/post.out', '-w', '%{http_code}',
+	push(args, '-m', '' + (timeout || 15), '-o', out, '-w', '%{http_code}',
 		'-H', 'Authorization: Bearer ' + cfg.token, '-H', 'Content-Type: application/json',
 		'--data-binary', '@' + file, cfg.server + path);
 	let code = int(trim(run(args))) || 0;
-	let out = fs.readfile(TMP_DIR + '/post.out') || '';
+	let body = fs.readfile(out) || '';
 	fs.unlink(file);
-	return { code: code, body: out };
+	return { code: code, body: body };
 }
 
 function installed_version(name) {
@@ -191,77 +223,139 @@ function installed_version(name) {
 	return '';
 }
 
+// hello — версии и режим на сервер. Если ссылку фида перевыпустили, сервер вернёт новый токен:
+// агент записывает его в /etc/config/listok и продолжает без переустановки.
 function hello(cfg) {
 	let r = post(cfg, '/agent/v1/hello', {
 		agent_version: VERSION,
 		forkop_version: installed_version('forkop'),
 		singbox_version: installed_version('sing-box'),
+		mode: cfg.mode,
+		interval_s: cfg.mode == 'poll' ? cfg.interval : 0,
 		sections: keys(cfg.feeds)
 	});
+	if (r.code == 401)
+		log('err', 'hello: токен агента не принят (агент отвязан на сервере?) — переустановите агент');
 	if (r.code != 200) {
 		log('warning', 'hello: сервер ответил ' + r.code);
-		return;
+		return r.code;
 	}
 	let resp = json(r.body);
-	for (let f in resp?.feeds || [])
-		if (!cfg.feeds[f.section])
+	let c = null;
+	for (let f in resp?.feeds || []) {
+		if (!cfg.feeds[f.section]) {
 			log('warning', 'на сервере есть фид секции ' + f.section + ', которой нет в /etc/config/listok — переустановите агент');
+			continue;
+		}
+		if (f.token && f.token != cfg.feeds[f.section]) {
+			c = c || cursor(UCI_DIR);
+			c.set('listok', cfg.uci_names[f.section], 'token', f.token);
+			cfg.feeds[f.section] = f.token;
+			log('info', 'ссылку фида секции ' + f.section + ' перевыпустили, новый токен записан');
+		}
+	}
+	if (c)
+		c.commit('listok');
+	return 200;
 }
 
 function report(cfg, section, etag, res) {
 	let r = post(cfg, '/agent/v1/applied', { section: section, etag: etag, ok: res.ok, error: res.error || '' });
 	if (r.code != 204)
-		log('warning', 'отчёт о применении: сервер ответил ' + r.code);
+		log('warning', 'отчёт о применении секции ' + section + ': сервер ответил ' + r.code);
 }
 
-function cmd_run(section) {
-	let cfg = config();
-	if (!cfg.feeds[section])
-		die('нет фида секции ' + section + ' в /etc/config/listok');
-	let etag = trim(fs.readfile(STATE_DIR + '/' + section + '.etag') || '');
-	let backoff = 5, next_hello = 0;
-	log('info', 'агент ' + VERSION + ' запущен для секции ' + section);
-	while (true) {
-		if (time() >= next_hello) {
-			hello(cfg);
-			next_hello = time() + 3600;
-		}
-		let t0 = time();
-		let r = fetch(cfg, section, etag, WAIT_S);
-		if (r.code == 304) {
-			backoff = 5;
-			if (time() - t0 < 5)
-				sleep(30000); // сервер не держит long-poll: не долбим его
-			continue;
-		}
-		if (r.code == 200) {
-			let bad = validate(r.body);
-			if (bad) {
-				log('err', 'фид секции ' + section + ' отклонён: ' + bad);
-				sleep(backoff * 1000);
-				backoff = min(backoff * 2, BACKOFF_MAX_S);
-				continue;
-			}
-			let changed = store(section, r.body, r.etag);
-			etag = r.etag;
-			let res = { ok: true };
-			if (changed) {
-				log('info', 'новая версия фида секции ' + section + ' ' + etag + ', применяю');
-				res = apply(section);
-				log(res.ok ? 'info' : 'err', res.ok ? 'применено ' + etag : res.error);
-			}
-			report(cfg, section, etag, res);
-			backoff = 5;
-			continue;
+// sync_changed — скачать изменившиеся секции, проверить, положить; одним list_update применить.
+// Возвращает false при ошибке сети или сервера (тогда цикл уходит в паузу).
+function sync_changed(cfg, sections) {
+	let applied = [], etags = {}, ok = true;
+	for (let s in sections) {
+		let r = fetch(cfg, s);
+		if (r.code == 404) {
+			// Ссылку могли перевыпустить: hello подтянет новый токен, пробуем ещё раз.
+			let old = cfg.feeds[s];
+			if (hello(cfg) == 200 && cfg.feeds[s] != old)
+				r = fetch(cfg, s);
 		}
 		if (r.code == 404) {
-			log('warning', 'фид секции ' + section + ' не найден (404): ссылку перевыпустили или фид удалён');
-			sleep(BACKOFF_MAX_S * 1000);
+			log('warning', 'фид секции ' + s + ' не найден (404)');
 			continue;
 		}
-		log('warning', 'нет связи с сервером (код ' + r.code + '), повтор через ' + backoff + ' с');
-		sleep(backoff * 1000);
-		backoff = min(backoff * 2, BACKOFF_MAX_S);
+		if (r.code != 200) {
+			log('warning', 'фид секции ' + s + ': сервер ответил ' + r.code);
+			ok = false;
+			continue;
+		}
+		let bad = validate(r.body);
+		if (bad) {
+			log('err', 'фид секции ' + s + ' отклонён: ' + bad);
+			ok = false;
+			continue;
+		}
+		etags[s] = r.etag;
+		if (store(s, r.body, r.etag))
+			push(applied, s);
+		else
+			report(cfg, s, r.etag, { ok: true });
+	}
+	if (length(applied)) {
+		log('info', 'новые версии фидов: ' + join(', ', applied) + ', применяю');
+		let res = apply(applied);
+		for (let s in applied) {
+			log(res[s].ok ? 'info' : 'err', res[s].ok ? 'применено ' + s + ' ' + etags[s] : res[s].error);
+			report(cfg, s, etags[s], res[s]);
+		}
+	}
+	return ok;
+}
+
+function cmd_run() {
+	let cfg = config();
+	if (!length(keys(cfg.feeds)))
+		die('в /etc/config/listok нет ни одного фида');
+	let backoff = 5, next_hello = 0;
+	log('info', 'агент ' + VERSION + ' запущен: секции ' + join(', ', sort(keys(cfg.feeds))) +
+		(cfg.mode == 'poll' ? ', проверка раз в ' + cfg.interval + ' с' : ', мгновенный режим'));
+	while (true) {
+		if (time() >= next_hello) {
+			let code = hello(cfg);
+			next_hello = time() + (code == 200 ? 3600 : 60);
+		}
+		let etags = {};
+		for (let s in keys(cfg.feeds))
+			etags[s] = etag_of(s);
+		let wait = cfg.mode == 'poll' ? 0 : WAIT_S;
+		let t0 = time();
+		let r = post(cfg, '/agent/v1/wait', { feeds: etags, wait: wait }, wait + 25);
+		let resp = r.code == 200 ? json(r.body) : null;
+		if (!resp) {
+			if (r.code == 401) {
+				log('err', 'токен агента не принят — агент отвязан на сервере, жду час');
+				sleep(3600 * 1000);
+				continue;
+			}
+			log('warning', 'нет связи с сервером (код ' + r.code + '), повтор через ' + backoff + ' с');
+			sleep(backoff * 1000);
+			backoff = min(backoff * 2, BACKOFF_MAX_S);
+			continue;
+		}
+		if (length(resp.gone || [])) {
+			log('warning', 'фиды секций ' + join(', ', resp.gone) + ' недоступны (удалены, выключены или перевыпущены) — спрашиваю сервер');
+			if (hello(cfg) == 200)
+				next_hello = time() + 3600;
+		}
+		if (length(resp.changed || []) && !sync_changed(cfg, resp.changed)) {
+			sleep(backoff * 1000);
+			backoff = min(backoff * 2, BACKOFF_MAX_S);
+			continue;
+		}
+		backoff = 5;
+		if (cfg.mode == 'poll')
+			sleep(cfg.interval * 1000);
+		else if (length(resp.gone || []))
+			sleep(BACKOFF_MAX_S * 1000); // фид пропал: не долбить сервер, пока его не вернут
+		else if (time() - t0 < 5 && !length(resp.changed || []))
+			sleep(30000); // сервер не держит long-poll: не долбить его
 	}
 }
 
@@ -269,7 +363,7 @@ function cmd_sync(section) {
 	let cfg = config();
 	if (!cfg.feeds[section])
 		die('нет фида секции ' + section + ' в /etc/config/listok');
-	let r = fetch(cfg, section, '', 0);
+	let r = fetch(cfg, section);
 	if (r.code != 200)
 		die('фид секции ' + section + ': сервер ответил ' + r.code);
 	let bad = validate(r.body);
@@ -281,12 +375,12 @@ function cmd_sync(section) {
 
 function cmd_status() {
 	let cfg = config();
-	print('агент ' + VERSION + ', сервер ' + cfg.server + (cfg.server_ip ? ' (через ' + cfg.server_ip + ')' : '') + '\n');
+	print('агент ' + VERSION + ', сервер ' + cfg.server + (cfg.server_ip ? ' (через ' + cfg.server_ip + ')' : '') +
+		(cfg.mode == 'poll' ? ', проверка раз в ' + cfg.interval + ' с' : ', мгновенный режим') + '\n');
 	for (let section in sort(keys(cfg.feeds))) {
 		let text = fs.readfile(list_path(section));
 		let n = text ? length(split(trim(text), '\n')) - 1 : 0;
-		print(sprintf('  %-12s %s записей, версия %s\n', section, text ? '' + n : 'нет файла,',
-			trim(fs.readfile(STATE_DIR + '/' + section + '.etag') || '—')));
+		print(sprintf('  %-12s %s записей, версия %s\n', section, text ? '' + n : 'нет файла,', etag_of(section) || '—'));
 	}
 }
 
@@ -319,8 +413,8 @@ function cmd_uninstall() {
 }
 
 let cmd = ARGV[0];
-if (cmd == 'run' && ARGV[1])
-	cmd_run(ARGV[1]);
+if (cmd == 'run')
+	cmd_run();
 else if (cmd == 'sync' && ARGV[1])
 	cmd_sync(ARGV[1]);
 else if (cmd == 'status')
@@ -330,6 +424,6 @@ else if (cmd == 'uninstall')
 else if (cmd == 'version')
 	print(VERSION + '\n');
 else {
-	warn('использование: listok-agent run|sync <секция> | status | uninstall | version\n');
+	warn('использование: listok-agent run | sync <секция> | status | uninstall | version\n');
 	exit(2);
 }

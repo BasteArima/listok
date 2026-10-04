@@ -62,6 +62,7 @@ func New(d Deps) (*Server, error) {
 	mux.HandleFunc("GET /install/{token}", s.limited(s.installScript))
 	mux.HandleFunc("POST /agent/v1/hello", s.limited(s.agentHello))
 	mux.HandleFunc("POST /agent/v1/applied", s.limited(s.agentApplied))
+	mux.HandleFunc("POST /agent/v1/wait", s.limited(s.agentWait))
 
 	mux.HandleFunc("GET /setup", s.setupForm)
 	mux.HandleFunc("POST /setup", s.setupSubmit)

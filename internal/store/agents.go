@@ -52,6 +52,8 @@ type AgentInfo struct {
 	AgentVersion   string
 	ForkopVersion  string
 	SingboxVersion string
+	Mode           string // wait или poll
+	IntervalS      int    // для poll
 }
 
 // TouchAgent отмечает запрос агента: время, адрес и (если пришли) версии.
@@ -60,9 +62,11 @@ func (s *Store) TouchAgent(ctx context.Context, routerID int64, now time.Time, i
 		UPDATE routers SET last_seen_at = ?, last_ip = ?,
 		       agent_version   = coalesce(nullif(?, ''), agent_version),
 		       forkop_version  = coalesce(nullif(?, ''), forkop_version),
-		       singbox_version = coalesce(nullif(?, ''), singbox_version)
+		       singbox_version = coalesce(nullif(?, ''), singbox_version),
+		       agent_mode       = coalesce(nullif(?, ''), agent_mode),
+		       agent_interval_s = coalesce(nullif(?, 0), agent_interval_s)
 		WHERE id = ?`,
-		unix(now), nullStr(ip), info.AgentVersion, info.ForkopVersion, info.SingboxVersion, routerID)
+		unix(now), nullStr(ip), info.AgentVersion, info.ForkopVersion, info.SingboxVersion, info.Mode, info.IntervalS, routerID)
 	return err
 }
 
