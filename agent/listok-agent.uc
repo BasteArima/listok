@@ -17,7 +17,7 @@
 import * as fs from 'fs';
 import { cursor } from 'uci';
 
-const VERSION = '0.2.0';
+const VERSION = '0.2.1';
 const UCI_DIR = getenv('LISTOK_UCI_DIR') || '/etc/config';
 const STATE_DIR = getenv('LISTOK_STATE_DIR') || '/etc/listok';
 const TMP_DIR = getenv('LISTOK_TMP_DIR') || '/tmp/listok';
@@ -50,7 +50,7 @@ function shq(s) {
 
 // run — запуск команды с захватом stdout. Аргументы экранируются, shell не интерпретирует их.
 function run(args) {
-	let p = fs.popen(join(' ', map(args, shq)) + ' 2>/dev/null', 'r');
+	let p = fs.popen(join(' ', map(args, shq)) + ' 2>/dev/null </dev/null', 'r');
 	if (!p)
 		return '';
 	let out = p.read('all') || '';
@@ -82,9 +82,48 @@ function config() {
 	return cfg;
 }
 
-// curl_base — общие параметры curl: таймаут соединения, --resolve на адрес сервера в LAN (D-028), прокси.
+// server_addr — хост, порт и адрес соединения сервера (с учётом server_ip).
+function server_addr(cfg) {
+	let m = match(cfg.server, /^(https?):\/\/([^\/:]+)(:([0-9]+))?/);
+	if (!m)
+		return null;
+	return { https: m[1] == 'https', host: m[2], port: m[4] || (m[1] == 'https' ? '443' : '80'),
+		connect: cfg.server_ip || m[2] };
+}
+
+// detect_ca — корень, которым подписан сертификат сервера, из /etc/ssl/certs (D-034).
+// С полным хранилищем (~150 корней) curl тратит на разбор ~0,3 с процессора на каждый запрос,
+// с одним нужным корнем — вчетверо меньше; проверка сертификата та же. Нет openssl или корня — ''
+// (curl возьмёт полное хранилище).
+function detect_ca(cfg) {
+	let a = server_addr(cfg);
+	if (!a || !a.https || !fs.access('/usr/bin/openssl'))
+		return '';
+	let connect = index(a.connect, ':') >= 0 ? '[' + a.connect + ']' : a.connect;
+	let chain = run([ 'openssl', 's_client', '-connect', connect + ':' + a.port, '-servername', a.host, '-showcerts' ]);
+	fs.mkdir(TMP_DIR);
+	let tmp = TMP_DIR + '/chain.pem';
+	for (let pem in match(chain, /-----BEGIN CERTIFICATE-----[^-]+-----END CERTIFICATE-----/g) || []) {
+		fs.writefile(tmp, pem[0] + '\n');
+		let h = trim(run([ 'openssl', 'x509', '-in', tmp, '-noout', '-issuer_hash' ]));
+		for (let i = 0; h != '' && i < 4; i++) {
+			let f = '/etc/ssl/certs/' + h + '.' + i;
+			if (fs.access(f)) {
+				fs.unlink(tmp);
+				return f;
+			}
+		}
+	}
+	fs.unlink(tmp);
+	return '';
+}
+
+// curl_base — общие параметры curl: таймаут соединения, --resolve на адрес сервера в LAN (D-028),
+// прокси, один корень вместо всего хранилища (D-034).
 function curl_base(cfg) {
 	let args = [ 'curl', '-sS', '--connect-timeout', '10' ];
+	if (cfg.ca)
+		push(args, '--cacert', cfg.ca);
 	if (cfg.server_ip) {
 		let m = match(cfg.server, /^(https?):\/\/([^\/:]+)(:([0-9]+))?/);
 		if (m) {
@@ -309,17 +348,51 @@ function sync_changed(cfg, sections) {
 	return ok;
 }
 
+// pin_ca — найти корень сервера и убедиться, что с ним запрос проходит; иначе полное хранилище.
+function pin_ca(cfg) {
+	cfg.ca = detect_ca(cfg);
+	if (!cfg.ca)
+		return;
+	let args = curl_base(cfg);
+	push(args, '-m', '15', '-o', '/dev/null', '-w', '%{http_code}', cfg.server + '/healthz');
+	if (trim(run(args)) != '200') {
+		log('info', 'проверка с корнем ' + cfg.ca + ' не прошла, использую полное хранилище сертификатов');
+		cfg.ca = '';
+	}
+}
+
+// report_state — при старте доложить, что сейчас применено: файл есть и forkop его подхватил.
+// Так статус на сервере виден сразу после установки или перезагрузки, а не после первой правки.
+function report_state(cfg) {
+	for (let s in keys(cfg.feeds)) {
+		let etag = etag_of(s);
+		if (!etag || !fs.access(list_path(s)))
+			continue;
+		let ruleset = fs.readfile(RULESET_DIR + '/' + s + '-lists-ruleset.json') || '';
+		if (DRY_RUN || index(ruleset, SENTINEL) >= 0)
+			report(cfg, s, etag, { ok: true });
+		else
+			report(cfg, s, etag, { ok: false, error: 'в rule-set секции ' + s + ' нет списка listok — forkop не подхватил файл, нужен его перезапуск' });
+	}
+}
+
 function cmd_run() {
 	let cfg = config();
 	if (!length(keys(cfg.feeds)))
 		die('в /etc/config/listok нет ни одного фида');
-	let backoff = 5, next_hello = 0;
+	pin_ca(cfg);
+	let backoff = 5, next_hello = 0, reported = false;
 	log('info', 'агент ' + VERSION + ' запущен: секции ' + join(', ', sort(keys(cfg.feeds))) +
-		(cfg.mode == 'poll' ? ', проверка раз в ' + cfg.interval + ' с' : ', мгновенный режим'));
+		(cfg.mode == 'poll' ? ', проверка раз в ' + cfg.interval + ' с' : ', мгновенный режим') +
+		(cfg.ca ? ', корень ' + cfg.ca : ''));
 	while (true) {
 		if (time() >= next_hello) {
 			let code = hello(cfg);
 			next_hello = time() + (code == 200 ? 3600 : 60);
+			if (code == 200 && !reported) {
+				report_state(cfg);
+				reported = true;
+			}
 		}
 		let etags = {};
 		for (let s in keys(cfg.feeds))
@@ -337,6 +410,8 @@ function cmd_run() {
 			log('warning', 'нет связи с сервером (код ' + r.code + '), повтор через ' + backoff + ' с');
 			sleep(backoff * 1000);
 			backoff = min(backoff * 2, BACKOFF_MAX_S);
+			if (r.code == 0 && cfg.ca)
+				pin_ca(cfg); // сертификат сервера могли перевыпустить другим корнем
 			continue;
 		}
 		if (length(resp.gone || [])) {
