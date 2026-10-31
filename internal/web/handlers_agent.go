@@ -247,7 +247,7 @@ type appliedRequest struct {
 	Error   string `json:"error"`
 }
 
-// agentApplied — POST /agent/v1/applied: результат forkop list_update на роутере.
+// agentApplied — POST /agent/v1/applied: результат применения фида в forkop на роутере.
 func (s *Server) agentApplied(w http.ResponseWriter, r *http.Request) {
 	rt, ok := s.agentAuth(w, r)
 	if !ok {

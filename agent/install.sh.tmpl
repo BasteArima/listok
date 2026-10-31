@@ -13,17 +13,19 @@ die() { echo "listok: ОШИБКА: $*" >&2; exit 1; }
 [ -x /usr/bin/forkop ] || die "forkop не найден (/usr/bin/forkop)"
 command -v ucode >/dev/null || die "нет ucode"
 command -v curl >/dev/null || die "нет curl"
-for s in $SECTIONS; do
-	uci -q get "forkop.$s" >/dev/null || die "в forkop нет секции $s — создайте её или исправьте фид в listok"
-done
+
+# Секции ищет сам агент: в forkop 2 это название из LuCI (option label), в 1.x — имя секции.
+mkdir -p /tmp/listok
+cat > /tmp/listok/listok-agent <<'LISTOK_AGENT_EOF'
+[[.AgentCode]]LISTOK_AGENT_EOF
+ucode /tmp/listok/listok-agent check $SECTIONS || exit 1
 
 STAMP=$(date +%Y%m%d-%H%M%S)
 cp /etc/config/forkop "/etc/config/forkop.bak-listok-$STAMP"
 say "бэкап настроек forkop: /etc/config/forkop.bak-listok-$STAMP"
 
 mkdir -p /etc/listok
-cat > /usr/bin/listok-agent <<'LISTOK_AGENT_EOF'
-[[.AgentCode]]LISTOK_AGENT_EOF
+mv /tmp/listok/listok-agent /usr/bin/listok-agent
 chmod 755 /usr/bin/listok-agent
 
 cat > /etc/init.d/listok-agent <<'LISTOK_INIT_EOF'
@@ -55,34 +57,11 @@ for s in $SECTIONS; do
 	/usr/bin/listok-agent sync "$s" || die "не удалось скачать фид секции $s — проверьте связь роутера с $SERVER"
 done
 
-# В forkop: ссылки на фиды listok (если их вставляли вручную) заменяются локальными файлами.
-# Локальный путь forkop читает синхронно при старте, без гонки, как у ссылок (forkop-integration.md).
+# В forkop: файлы /etc/listok/<секция>.lst подключаются к секциям (forkop 1 — domain_ip_lists,
+# forkop 2 — rule_set_with_subnets), ссылки на фиды этого сервера, если их вставляли вручную,
+# убираются. Локальный путь forkop читает синхронно при старте, без гонки (forkop-integration.md).
 # Если нужное уже стоит (переустановка), forkop не трогаем и не перезапускаем.
-changed=0
-for s in $SECTIONS; do
-	cur=$(uci -q get "forkop.$s.domain_ip_lists" || true)
-	keep=""
-	for v in $cur; do
-		case "$v" in
-			"$SERVER"/f/*) say "секция $s: ссылка на фид заменена локальным файлом" ;;
-			"/etc/listok/$s.lst") ;;
-			*) keep="$keep $v" ;;
-		esac
-	done
-	want=$(echo $keep /etc/listok/$s.lst)
-	[ "$(echo $cur)" = "$want" ] && continue
-	uci -q delete "forkop.$s.domain_ip_lists" || true
-	for v in $want; do uci add_list "forkop.$s.domain_ip_lists=$v"; done
-	changed=1
-done
-
-if [ "$changed" = 1 ]; then
-	uci commit forkop
-	say "перезапуск forkop (единственный: дальше списки обновляются без перезапуска sing-box)"
-	/etc/init.d/forkop reload
-else
-	say "настройки forkop уже верные, перезапуск не нужен"
-fi
+/usr/bin/listok-agent attach $SECTIONS || die "не удалось подключить списки к forkop — бэкап: /etc/config/forkop.bak-listok-$STAMP"
 /etc/init.d/listok-agent enable
 /etc/init.d/listok-agent restart
 

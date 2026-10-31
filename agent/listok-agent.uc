@@ -1,23 +1,29 @@
 #!/usr/bin/ucode
 // listok-agent — агент listok на роутере с forkop. Описание: docs/router-agent.md.
 //
-//   listok-agent run            цикл синхронизации всех секций (его запускает procd)
-//   listok-agent sync <секция>  одна загрузка фида без forkop list_update (для установщика)
-//   listok-agent status         что настроено и что лежит на роутере
-//   listok-agent uninstall      убрать агент и его файлы из forkop
+//   listok-agent run                цикл синхронизации всех секций (его запускает procd)
+//   listok-agent sync <секция>      одна загрузка фида без применения в forkop (для установщика)
+//   listok-agent check <секции…>    есть ли такие секции в forkop (для установщика)
+//   listok-agent attach <секции…>   подключить файлы listok к секциям forkop (для установщика)
+//   listok-agent status             что настроено и что лежит на роутере
+//   listok-agent uninstall          убрать агент и его файлы из forkop
+//
+// forkop 1.x: файл секции стоит в domain_ip_lists, применение — forkop list_update.
+// forkop 2.x: файл — локальный rule set ядра (rule_set_with_subnets), ядро само перечитывает
+// его при изменении, а подсети в nft переносит служба forkop. Описание: docs/forkop-integration.md.
 //
 // Режимы (option mode в /etc/config/listok):
 //   wait — POST /agent/v1/wait держит одно соединение на все секции, изменения за секунды;
 //   poll — та же проверка без ожидания раз в option interval секунд (для слабых роутеров).
 //
 // Для проверки без изменений на роутере: LISTOK_UCI_DIR, LISTOK_STATE_DIR, LISTOK_TMP_DIR
-// переносят конфиг и файлы в другой каталог, LISTOK_DRY_RUN=1 не вызывает forkop.
+// переносят конфиги (и /etc/config/forkop) и файлы в другой каталог, LISTOK_DRY_RUN=1 не вызывает forkop.
 'use strict';
 
 import * as fs from 'fs';
 import { cursor } from 'uci';
 
-const VERSION = '0.2.1';
+const VERSION = '0.3.0';
 const UCI_DIR = getenv('LISTOK_UCI_DIR') || '/etc/config';
 const STATE_DIR = getenv('LISTOK_STATE_DIR') || '/etc/listok';
 const TMP_DIR = getenv('LISTOK_TMP_DIR') || '/tmp/listok';
@@ -28,6 +34,9 @@ const FORKOP = '/usr/bin/forkop';
 const FORKOP_PID = '/var/run/forkop_list_update.pid';
 const RULESET_DIR = '/tmp/sing-box/rulesets';
 const SENTINEL = 'listok-sentinel.invalid';
+const LIST_KEYS = [ 'domain_ip_lists', 'rule_set', 'rule_set_with_subnets' ]; // где в forkop бывают пути к спискам
+const RELOAD_WAIT_S = 15;     // forkop 2: сколько ждать, пока ядро перечитает файл
+const CLASH_PORT = '9090';    // порт clash API, если в конфиге sing-box он не указан
 const WAIT_S = 55;            // wait: сервер держит запрос до стольких секунд (не больше LISTOK_LONGPOLL_MAX)
 const POLL_DEFAULT_S = 300;
 const BACKOFF_MAX_S = 300;
@@ -42,6 +51,19 @@ function die(msg) {
 	log('err', msg);
 	warn('listok-agent: ' + msg + '\n');
 	exit(1);
+}
+
+function parse(text) {
+	try {
+		return json(text);
+	}
+	catch (e) {
+		return null;
+	}
+}
+
+function as_list(v) {
+	return type(v) == 'array' ? v : (type(v) == 'string' ? [ v ] : []);
 }
 
 function shq(s) {
@@ -198,21 +220,139 @@ function store(section, path, etag) {
 	return changed;
 }
 
+// forkop_major — основная версия forkop по settings.config_version (у 1.x её нет).
+function forkop_major() {
+	let v = cursor(UCI_DIR).get('forkop', 'settings', 'config_version') || '';
+	return int(split(v, '.')[0]) || 1;
+}
+
+// forkop_section — UCI-имя секции forkop по её названию. В forkop 2 секции, созданные в LuCI,
+// анонимные (cfg…), а колонка «Name» — это option label; в 1.x название и есть имя секции.
+function forkop_section(c, name) {
+	let found = null;
+	c.foreach('forkop', 'section', function(s) {
+		if (found == null && s.label == name)
+			found = s['.name'];
+	});
+	if (found == null && c.get('forkop', name) == 'section')
+		found = name;
+	return found;
+}
+
+// list_key — опция секции, откуда forkop берёт локальный файл со списком.
+function list_key(c, sec, major) {
+	if (major < 2)
+		return 'domain_ip_lists';
+	// Как миграция forkop 2.0.0 переносит domain_ip_lists: DNS-секция берёт из набора только домены.
+	return c.get('forkop', sec, 'action') == 'dns' ? 'rule_set' : 'rule_set_with_subnets';
+}
+
+// singbox_conf — конфиг sing-box, который сгенерировал forkop 2: в нём теги rule set и clash API.
+function singbox_conf() {
+	let path = cursor(UCI_DIR).get('forkop', 'settings', 'config_path') || '/etc/sing-box/config.json';
+	return parse(fs.readfile(path) || '');
+}
+
+// clash_api — адрес и секрет clash API ядра; 0.0.0.0 и :: — это локальный адрес.
+function clash_api(conf) {
+	let ctl = conf?.experimental?.clash_api;
+	if (!ctl)
+		return null;
+	let addr = ctl.external_controller || '', host = '127.0.0.1', port = CLASH_PORT;
+	let i = rindex(addr, ':');
+	if (i >= 0) {
+		host = substr(addr, 0, i);
+		port = substr(addr, i + 1) || CLASH_PORT;
+	}
+	if (host == '' || host == '0.0.0.0' || host == '::' || host == '[::]')
+		host = '127.0.0.1';
+	return { url: 'http://' + host + ':' + port, secret: ctl.secret || '' };
+}
+
+// ruleset_tag — тег, под которым forkop подключил файл секции к ядру; null — не подключил.
+function ruleset_tag(conf, section) {
+	for (let r in conf?.route?.rule_set || [])
+		if (r.type == 'local' && r.path == list_path(section))
+			return r.tag;
+	return null;
+}
+
+// revision — ревизия rule set в ядре: растёт при каждом перечитывании файла. null — ядро не ответило.
+function revision(api, tag) {
+	let args = [ 'curl', '-sS', '-m', '5', '--noproxy', '*' ];
+	if (api.secret)
+		push(args, '-H', 'Authorization: Bearer ' + api.secret);
+	push(args, api.url + '/providers/rules/' + tag);
+	let r = parse(run(args));
+	return type(r?.revision) == 'int' ? r.revision : null;
+}
+
+// probe — для forkop 2: тег rule set каждой секции и его ревизия сейчас (до записи файла).
+function probe(sections) {
+	let conf = singbox_conf(), api = clash_api(conf), out = {};
+	for (let s in sections) {
+		let tag = ruleset_tag(conf, s);
+		out[s] = { tag: tag, rev: tag && api ? revision(api, tag) : null };
+	}
+	return { api: api, sections: out };
+}
+
+function not_attached(s) {
+	return 'в конфиге sing-box нет rule set с ' + list_path(s) + ' — forkop не подключил файл секции ' + s +
+		', нужен его перезапуск или переустановка агента';
+}
+
+const NO_API = 'clash API ядра forkop не отвечает — не проверить, подхвачен ли список';
+
 function forkop_busy() {
 	let pid = trim(fs.readfile(FORKOP_PID) || '');
 	return pid != '' && fs.access('/proc/' + pid);
 }
 
-// apply — один forkop list_update на все изменившиеся секции (он и так обновляет все разом).
-// Код выхода ничего не говорит (D-029): успех секции — её rule-set пересобран после вызова.
+// apply — применить изменившиеся секции. before — probe до записи файлов (forkop 2) или null.
 // Возвращает {секция: {ok, error}}.
-function apply(sections) {
+function apply(sections, before) {
 	let res = {};
 	if (DRY_RUN) {
 		for (let s in sections)
 			res[s] = { ok: true };
 		return res;
 	}
+	return before ? apply_core(sections, before) : apply_list_update(sections);
+}
+
+// apply_core — forkop 2: ядро перечитывает файл само, как только он сменился, а подсети в nft
+// переносит служба forkop по событию ядра (D-036). Успех — ревизия rule set сменилась.
+function apply_core(sections, before) {
+	let res = {}, pending = [];
+	for (let s in sections) {
+		let p = before.sections[s];
+		if (!p.tag)
+			res[s] = { ok: false, error: not_attached(s) };
+		else if (p.rev == null)
+			res[s] = { ok: false, error: NO_API };
+		else
+			push(pending, s);
+	}
+	for (let i = 0; i < RELOAD_WAIT_S * 2 && length(pending); i++) {
+		sleep(500);
+		pending = filter(pending, function(s) {
+			let p = before.sections[s], r = revision(before.api, p.tag);
+			if (r == null || r == p.rev)
+				return true;
+			res[s] = { ok: true };
+			return false;
+		});
+	}
+	for (let s in pending)
+		res[s] = { ok: false, error: 'ядро не перечитало файл секции ' + s + ' за ' + RELOAD_WAIT_S + ' с — смотрите logread -e sing-box' };
+	return res;
+}
+
+// apply_list_update — forkop 1.x: один forkop list_update на все изменившиеся секции (он и так
+// обновляет все разом). Код выхода ничего не говорит (D-029): успех секции — её rule-set пересобран.
+function apply_list_update(sections) {
+	let res = {};
 	let pending = sections;
 	for (let attempt = 1; attempt <= 3 && length(pending); attempt++) {
 		for (let i = 0; i < 100 && forkop_busy(); i++)
@@ -267,7 +407,7 @@ function installed_version(name) {
 function hello(cfg) {
 	let r = post(cfg, '/agent/v1/hello', {
 		agent_version: VERSION,
-		forkop_version: installed_version('forkop'),
+		forkop_version: installed_version('forkop') || cursor(UCI_DIR).get('forkop', 'settings', 'config_version') || '',
 		singbox_version: installed_version('sing-box'),
 		mode: cfg.mode,
 		interval_s: cfg.mode == 'poll' ? cfg.interval : 0,
@@ -304,10 +444,12 @@ function report(cfg, section, etag, res) {
 		log('warning', 'отчёт о применении секции ' + section + ': сервер ответил ' + r.code);
 }
 
-// sync_changed — скачать изменившиеся секции, проверить, положить; одним list_update применить.
+// sync_changed — скачать изменившиеся секции, проверить, положить и применить все разом.
 // Возвращает false при ошибке сети или сервера (тогда цикл уходит в паузу).
 function sync_changed(cfg, sections) {
 	let applied = [], etags = {}, ok = true;
+	// forkop 2: ревизии до записи, чтобы потом увидеть, что ядро перечитало файл.
+	let before = !DRY_RUN && forkop_major() >= 2 ? probe(sections) : null;
 	for (let s in sections) {
 		let r = fetch(cfg, s);
 		if (r.code == 404) {
@@ -339,7 +481,7 @@ function sync_changed(cfg, sections) {
 	}
 	if (length(applied)) {
 		log('info', 'новые версии фидов: ' + join(', ', applied) + ', применяю');
-		let res = apply(applied);
+		let res = apply(applied, before);
 		for (let s in applied) {
 			log(res[s].ok ? 'info' : 'err', res[s].ok ? 'применено ' + s + ' ' + etags[s] : res[s].error);
 			report(cfg, s, etags[s], res[s]);
@@ -361,19 +503,37 @@ function pin_ca(cfg) {
 	}
 }
 
+// loaded — подхвачен ли сейчас forkop'ом файл каждой секции: {секция: {ok, error}}.
+function loaded(sections) {
+	let res = {};
+	if (forkop_major() >= 2) {
+		// Сразу после установки ядро может ещё стартовать: ждём clash API до полуминуты.
+		let p = probe(sections);
+		for (let i = 0; i < 15 && length(filter(sections, (s) => p.sections[s].tag && p.sections[s].rev == null)); i++) {
+			sleep(2000);
+			p = probe(sections);
+		}
+		for (let s in sections) {
+			let x = p.sections[s];
+			res[s] = !x.tag ? { ok: false, error: not_attached(s) } : (x.rev == null ? { ok: false, error: NO_API } : { ok: true });
+		}
+		return res;
+	}
+	for (let s in sections) {
+		let ruleset = fs.readfile(RULESET_DIR + '/' + s + '-lists-ruleset.json') || '';
+		res[s] = index(ruleset, SENTINEL) >= 0 ? { ok: true } :
+			{ ok: false, error: 'в rule-set секции ' + s + ' нет списка listok — forkop не подхватил файл, нужен его перезапуск' };
+	}
+	return res;
+}
+
 // report_state — при старте доложить, что сейчас применено: файл есть и forkop его подхватил.
 // Так статус на сервере виден сразу после установки или перезагрузки, а не после первой правки.
 function report_state(cfg) {
-	for (let s in keys(cfg.feeds)) {
-		let etag = etag_of(s);
-		if (!etag || !fs.access(list_path(s)))
-			continue;
-		let ruleset = fs.readfile(RULESET_DIR + '/' + s + '-lists-ruleset.json') || '';
-		if (DRY_RUN || index(ruleset, SENTINEL) >= 0)
-			report(cfg, s, etag, { ok: true });
-		else
-			report(cfg, s, etag, { ok: false, error: 'в rule-set секции ' + s + ' нет списка listok — forkop не подхватил файл, нужен его перезапуск' });
-	}
+	let ready = filter(keys(cfg.feeds), (s) => etag_of(s) && fs.access(list_path(s)));
+	let state = DRY_RUN ? null : loaded(ready);
+	for (let s in ready)
+		report(cfg, s, etag_of(s), state ? state[s] : { ok: true });
 }
 
 function cmd_run() {
@@ -448,10 +608,55 @@ function cmd_sync(section) {
 	print('секция ' + section + ': ' + (length(split(trim(fs.readfile(list_path(section))), '\n')) - 1) + ' записей\n');
 }
 
+// cmd_check — есть ли секции в forkop. Ничего не меняет: установщик зовёт его до любых правок.
+function cmd_check(sections) {
+	let c = cursor(UCI_DIR), bad = filter(sections, (s) => !forkop_section(c, s));
+	for (let s in bad)
+		warn('listok: ОШИБКА: в forkop нет секции ' + s + ' (ищу по названию в LuCI и по имени в /etc/config/forkop)' +
+			' — создайте её или исправьте фид в listok\n');
+	exit(length(bad) ? 1 : 0);
+}
+
+// cmd_attach — подключить файлы listok к секциям forkop. Ссылки на фиды этого сервера (если их
+// вставляли вручную) заменяются локальным файлом. Если настройки изменились — единственный
+// перезапуск forkop; при переустановке с теми же секциями forkop не трогается.
+function cmd_attach(sections) {
+	let cfg = config();
+	let c = cursor(UCI_DIR), major = forkop_major(), changed = false;
+	for (let name in sections) {
+		let sec = forkop_section(c, name);
+		if (!sec)
+			die('в forkop нет секции ' + name);
+		let key = list_key(c, sec, major), path = list_path(name);
+		let cur = as_list(c.get('forkop', sec, key));
+		let want = filter(cur, function(v) {
+			if (index(v, cfg.server + '/f/') == 0) {
+				print('listok: секция ' + name + ': ссылка на фид заменена локальным файлом\n');
+				return false;
+			}
+			return v != path;
+		});
+		push(want, path);
+		if (join('\n', cur) == join('\n', want))
+			continue;
+		c.set('forkop', sec, key, want);
+		changed = true;
+	}
+	if (!changed) {
+		print('listok: настройки forkop уже верные, перезапуск не нужен\n');
+		return;
+	}
+	c.commit('forkop');
+	print('listok: перезапуск forkop (единственный: дальше списки обновляются без перезапуска sing-box)\n');
+	if (!DRY_RUN)
+		system([ '/etc/init.d/forkop', 'reload' ]);
+}
+
 function cmd_status() {
 	let cfg = config();
 	print('агент ' + VERSION + ', сервер ' + cfg.server + (cfg.server_ip ? ' (через ' + cfg.server_ip + ')' : '') +
-		(cfg.mode == 'poll' ? ', проверка раз в ' + cfg.interval + ' с' : ', мгновенный режим') + '\n');
+		(cfg.mode == 'poll' ? ', проверка раз в ' + cfg.interval + ' с' : ', мгновенный режим') +
+		(forkop_major() >= 2 ? ', forkop 2: списки перечитывает ядро' : ', forkop 1: списки применяет forkop list_update') + '\n');
 	for (let section in sort(keys(cfg.feeds))) {
 		let text = fs.readfile(list_path(section));
 		let n = text ? length(split(trim(text), '\n')) - 1 : 0;
@@ -461,20 +666,18 @@ function cmd_status() {
 
 // cmd_uninstall — убрать локальные пути listok из forkop и удалить агент. forkop перезапустится.
 function cmd_uninstall() {
-	let c = cursor();
+	let c = cursor(UCI_DIR);
 	c.foreach('forkop', 'section', function(s) {
-		let lists = s.domain_ip_lists;
-		if (type(lists) == 'string')
-			lists = [ lists ];
-		if (type(lists) != 'array')
-			return;
-		let keep = filter(lists, (v) => index(v, STATE_DIR + '/') != 0);
-		if (length(keep) == length(lists))
-			return;
-		if (length(keep))
-			c.set('forkop', s['.name'], 'domain_ip_lists', keep);
-		else
-			c.delete('forkop', s['.name'], 'domain_ip_lists');
+		for (let key in LIST_KEYS) {
+			let lists = as_list(s[key]);
+			let keep = filter(lists, (v) => index(v, STATE_DIR + '/') != 0);
+			if (length(keep) == length(lists))
+				continue;
+			if (length(keep))
+				c.set('forkop', s['.name'], key, keep);
+			else
+				c.delete('forkop', s['.name'], key);
+		}
 	});
 	c.commit('forkop');
 	// procd запускает агент как ucode, по имени процесса его не найти — останавливаем через init.
@@ -492,6 +695,10 @@ if (cmd == 'run')
 	cmd_run();
 else if (cmd == 'sync' && ARGV[1])
 	cmd_sync(ARGV[1]);
+else if (cmd == 'check' && length(ARGV) > 1)
+	cmd_check(slice(ARGV, 1));
+else if (cmd == 'attach' && length(ARGV) > 1)
+	cmd_attach(slice(ARGV, 1));
 else if (cmd == 'status')
 	cmd_status();
 else if (cmd == 'uninstall')
@@ -499,6 +706,6 @@ else if (cmd == 'uninstall')
 else if (cmd == 'version')
 	print(VERSION + '\n');
 else {
-	warn('использование: listok-agent run | sync <секция> | status | uninstall | version\n');
+	warn('использование: listok-agent run | sync <секция> | check <секции…> | attach <секции…> | status | uninstall | version\n');
 	exit(2);
 }

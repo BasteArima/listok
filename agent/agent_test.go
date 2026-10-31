@@ -40,9 +40,9 @@ func TestInstallScript(t *testing.T) {
 		"const VERSION = '" + Version + "';",
 		"\nLISTOK_AGENT_EOF\n", "\nLISTOK_INIT_EOF\n", "\nLISTOK_CONFIG_EOF\n",
 		"cp /etc/config/forkop \"/etc/config/forkop.bak-listok-$STAMP\"",
-		"want=$(echo $keep /etc/listok/$s.lst)",
-		"for v in $want; do uci add_list \"forkop.$s.domain_ip_lists=$v\"; done",
-		"настройки forkop уже верные, перезапуск не нужен",
+		"ucode /tmp/listok/listok-agent check $SECTIONS || exit 1",
+		"mv /tmp/listok/listok-agent /usr/bin/listok-agent",
+		"/usr/bin/listok-agent attach $SECTIONS ||",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("в установщике нет %q", want)
