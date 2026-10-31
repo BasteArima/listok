@@ -27,6 +27,8 @@ var (
 
 var slugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,39}$`)
 
+const maxComment = 200 // символов
+
 type Service struct {
 	st       *store.Store
 	idx      *entry.Index
@@ -143,6 +145,8 @@ type Item struct {
 	Status string
 	// CoveredInTarget — покрыто записью целевого списка: добавлять бессмысленно.
 	CoveredInTarget bool
+	// Comment — с каким комментарием запись добавится.
+	Comment string
 }
 
 func (it Item) OK() bool { return it.Err == nil }
@@ -150,9 +154,19 @@ func (it Item) OK() bool { return it.Err == nil }
 // Preview разбирает ввод и показывает, что получится, не меняя данных.
 // targetID — список, куда собираются добавлять (0 — не выбран).
 func (s *Service) Preview(ctx context.Context, u store.User, input string, opt entry.Options, targetID int64) ([]Item, error) {
+	var items []Item
+	for _, r := range entry.ParseMany(input, opt) {
+		items = append(items, Item{Result: r})
+	}
+	return items, s.annotate(ctx, u, items, targetID, true)
+}
+
+// annotate заполняет покрытие разобранных записей по видимым пользователю спискам.
+// withCovers — искать и записи, которые станут лишними: это перебор всего индекса на каждую запись.
+func (s *Service) annotate(ctx context.Context, u store.User, items []Item, targetID int64, withCovers bool) error {
 	visible, err := s.Visible(ctx, u)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	byID := make(map[int64]store.List, len(visible))
 	for _, l := range visible {
@@ -168,21 +182,22 @@ func (s *Service) Preview(ctx context.Context, u store.User, input string, opt e
 		return out
 	}
 
-	var items []Item
-	for _, r := range entry.ParseMany(input, opt) {
-		it := Item{Result: r}
-		if r.Err == nil {
-			it.CoveredBy = toCovers(s.idx.CoveredBy(r.Entry))
-			it.Covers = toCovers(s.idx.Covers(r.Entry))
-			for _, c := range it.CoveredBy {
-				if c.ListID == targetID {
-					it.CoveredInTarget = true
-				}
+	for i := range items {
+		it := &items[i]
+		if it.Err != nil {
+			continue
+		}
+		it.CoveredBy = toCovers(s.idx.CoveredBy(it.Entry))
+		if withCovers {
+			it.Covers = toCovers(s.idx.Covers(it.Entry))
+		}
+		for _, c := range it.CoveredBy {
+			if c.ListID == targetID {
+				it.CoveredInTarget = true
 			}
 		}
-		items = append(items, it)
 	}
-	return items, nil
+	return nil
 }
 
 // Add разбирает ввод и добавляет подходящие записи в список одной версией.
@@ -192,16 +207,26 @@ func (s *Service) Add(ctx context.Context, u store.User, l store.List, input str
 		return nil, ErrForbidden
 	}
 	comment = strings.TrimSpace(comment)
-	if utf8.RuneCountInString(comment) > 200 {
+	if utf8.RuneCountInString(comment) > maxComment {
 		return nil, ErrLongComment
 	}
 	items, err := s.Preview(ctx, u, input, opt, l.ID)
 	if err != nil {
 		return nil, err
 	}
+	for i := range items {
+		items[i].Comment = comment
+	}
+	if err := s.addItems(ctx, u, l, items, source, ""); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
 
+// addItems добавляет разобранные записи одной версией и проставляет им Status.
+func (s *Service) addItems(ctx context.Context, u store.User, l store.List, items []Item, source, message string) error {
 	var added []entry.Entry
-	_, _, err = s.mutate(ctx, store.MutateOptions{ListID: l.ID, UserID: u.ID, Source: source, Now: s.now()},
+	_, _, err := s.mutate(ctx, store.MutateOptions{ListID: l.ID, UserID: u.ID, Source: source, Message: message, Now: s.now()},
 		func(m *store.Mutation) error {
 			added = added[:0]
 			for i := range items {
@@ -217,7 +242,7 @@ func (s *Service) Add(ctx context.Context, u store.User, l store.List, input str
 						}
 					}
 				default:
-					ok, err := m.Add(it.Entry.Value, string(it.Entry.Kind), comment)
+					ok, err := m.Add(it.Entry.Value, string(it.Entry.Kind), it.Comment)
 					if err != nil {
 						return err
 					}
@@ -233,12 +258,12 @@ func (s *Service) Add(ctx context.Context, u store.User, l store.List, input str
 			return nil
 		})
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, e := range added {
 		s.idx.Add(l.ID, e)
 	}
-	return items, nil
+	return nil
 }
 
 func (s *Service) SetEnabled(ctx context.Context, u store.User, l store.List, id int64, enabled bool) (store.Entry, error) {
@@ -247,7 +272,7 @@ func (s *Service) SetEnabled(ctx context.Context, u store.User, l store.List, id
 
 func (s *Service) SetComment(ctx context.Context, u store.User, l store.List, id int64, comment string) (store.Entry, error) {
 	comment = strings.TrimSpace(comment)
-	if utf8.RuneCountInString(comment) > 200 {
+	if utf8.RuneCountInString(comment) > maxComment {
 		return store.Entry{}, ErrLongComment
 	}
 	return s.update(ctx, u, l, id, &comment, nil)

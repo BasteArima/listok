@@ -49,6 +49,14 @@
 </div>
 {{end}}
 
+{{define "import-result"}}
+<div class="result">
+  <p><b>{{.Summary}}</b></p>
+  {{with .Items}}<ul class="plain items">{{range .}}{{template "item" .}}{{end}}</ul>{{end}}
+  {{if .More}}<p class="muted small">и ещё {{.More}}</p>{{end}}
+</div>
+{{end}}
+
 {{define "form-error"}}<p class="alert" role="alert">{{.}}</p>{{end}}
 
 {{define "list-stats"}}<div id="list-stats" class="stats muted small"{{if .OOB}} hx-swap-oob="true"{{end}}>

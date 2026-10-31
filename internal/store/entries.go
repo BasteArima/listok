@@ -68,8 +68,17 @@ func (s *Store) Entries(ctx context.Context, listID int64, f EntryFilter) ([]Ent
 		limit = 500
 	}
 	args = append(args, limit)
-	rows, err := s.db.QueryContext(ctx,
+	return s.queryEntries(ctx,
 		entrySelect+` WHERE `+strings.Join(where, " AND ")+` ORDER BY e.created_at DESC, e.id DESC LIMIT ?`, args...)
+}
+
+// AllEntries — все записи списка без ограничения числа, по значению (для экспорта).
+func (s *Store) AllEntries(ctx context.Context, listID int64) ([]Entry, error) {
+	return s.queryEntries(ctx, entrySelect+` WHERE e.list_id = ? ORDER BY e.value`, listID)
+}
+
+func (s *Store) queryEntries(ctx context.Context, query string, args ...any) ([]Entry, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

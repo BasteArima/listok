@@ -53,6 +53,8 @@
 | `GET /lists/{slug}` | Записи, поиск, фильтры (`q`, `kind` = domain/cidr) |
 | `GET /lists/{slug}/rows` | Только `<tbody id="rows">` для поиска |
 | `POST /lists/{slug}/entries` | Добавить пачку → итог + OOB: таблица (в `<template>`), счётчики |
+| `GET /lists/{slug}/export` | Файл списка `{slug}.txt` (`text/plain`, attachment): включённые записи с комментариями, формат — `normalization.md`, «Файл списка». Любая роль на списке |
+| `POST /lists/{slug}/import` | `multipart/form-data`, поле `file` (до 4 МБ, до 50 000 записей, UTF-8): добавить записи из файла одной версией (`source=import`, `message` «импорт из файла <имя>»). Ответ: итог (только непринятые строки, до 200) + OOB: таблица, счётчики. Без файла, не UTF-8, слишком большой — 422 с сообщением. Нужна роль owner/editor/admin |
 | `GET /lists/{slug}/entries/{id}/row`, `…/edit` | Строка таблицы в режиме просмотра / правки комментария |
 | `PATCH /lists/{slug}/entries/{id}` | Комментарий, вкл/выкл, срок |
 | `DELETE /lists/{slug}/entries/{id}` | Удалить |

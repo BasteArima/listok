@@ -80,6 +80,8 @@ func New(d Deps) (*Server, error) {
 	authed("GET /lists/{slug}/rows", s.listRows)
 	authed("POST /lists/{slug}/clear", s.clearList)
 	authed("POST /lists/{slug}/delete", s.deleteList)
+	authed("GET /lists/{slug}/export", s.exportList)
+	authed("POST /lists/{slug}/import", s.importList)
 	authed("POST /lists/{slug}/entries", s.addEntries)
 	authed("POST /lists/{slug}/entries/bulk", s.bulkEntries)
 	authed("PATCH /lists/{slug}/entries/{id}", s.patchEntry)

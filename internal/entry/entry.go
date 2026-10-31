@@ -111,9 +111,7 @@ func ParseMany(text string, opt Options) []Result {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		for _, tok := range strings.FieldsFunc(line, func(r rune) bool {
-			return r == ',' || r == ';' || r == ' ' || r == '\t'
-		}) {
+		for _, tok := range Tokens(line) {
 			r := Parse(tok, opt)
 			if r.Err == nil {
 				if seen[r.Entry.Value] {
@@ -125,6 +123,13 @@ func ParseMany(text string, opt Options) []Result {
 		}
 	}
 	return out
+}
+
+// Tokens делит строку ввода на токены: пробелы, табы, запятые, точки с запятой.
+func Tokens(line string) []string {
+	return strings.FieldsFunc(line, func(r rune) bool {
+		return r == ',' || r == ';' || r == ' ' || r == '\t'
+	})
 }
 
 func hostFromURL(s string) string {

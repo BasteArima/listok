@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -359,6 +360,101 @@ func (s *Server) addEntries(w http.ResponseWriter, r *http.Request) {
 		fragment{"rows", rows},
 		fragment{"list-stats", statsData{l, true}},
 		fragment{"oob-empty", "add-preview"},
+	)
+}
+
+// exportList отдаёт включённые записи списка файлом для обмена (docs/normalization.md, «Файл списка»).
+func (s *Server) exportList(w http.ResponseWriter, r *http.Request) {
+	l, ok := s.listFromPath(w, r)
+	if !ok {
+		return
+	}
+	data, _, err := s.Lists.Export(r.Context(), l)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+l.Slug+`.txt"`)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Write(data)
+}
+
+// importResultLimit — сколько непринятых строк показать после импорта.
+const importResultLimit = 200
+
+type importResult struct {
+	Summary string
+	Items   []lists.Item // только то, что не добавилось
+	More    int          // сколько таких строк не показано
+}
+
+// importList добавляет записи из загруженного файла (поле file) одной версией.
+// Отвечает итогом, таблицей и счётчиками out-of-band, как addEntries.
+func (s *Server) importList(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r.Context())
+	l, ok := s.listFromPath(w, r)
+	if !ok {
+		return
+	}
+	if !lists.CanEdit(l) {
+		s.listError(w, lists.ErrForbidden)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, lists.MaxImportBytes+64<<10)
+	f, fh, err := r.FormFile("file")
+	if err != nil {
+		msg := "Выберите файл"
+		if errors.As(err, new(*http.MaxBytesError)) {
+			msg = fmt.Sprintf("Файл больше %d МБ", lists.MaxImportBytes>>20)
+		}
+		s.renderFragments(w, http.StatusUnprocessableEntity, fragment{"form-error", msg})
+		return
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, lists.MaxImportBytes+1))
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if len(data) > lists.MaxImportBytes {
+		s.renderFragments(w, http.StatusUnprocessableEntity, fragment{"form-error", fmt.Sprintf("Файл больше %d МБ", lists.MaxImportBytes>>20)})
+		return
+	}
+	items, err := s.Lists.Import(r.Context(), *u, l, data, fh.Filename)
+	if errors.Is(err, lists.ErrBadFile) || errors.Is(err, lists.ErrBigFile) {
+		s.renderFragments(w, http.StatusUnprocessableEntity, fragment{"form-error", err.Error()})
+		return
+	}
+	if err != nil {
+		s.listError(w, err)
+		return
+	}
+	res := importResult{Summary: summarize(items)}
+	for _, it := range items {
+		if it.Status == "added" {
+			continue
+		}
+		if len(res.Items) == importResultLimit {
+			res.More++
+			continue
+		}
+		res.Items = append(res.Items, it)
+	}
+	l, err = s.Lists.Get(r.Context(), *u, l.Slug)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	rows, err := s.loadRows(r.Context(), l, store.EntryFilter{}, true)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	s.renderFragments(w, http.StatusOK,
+		fragment{"import-result", res},
+		fragment{"rows", rows},
+		fragment{"list-stats", statsData{l, true}},
 	)
 }
 

@@ -27,6 +27,26 @@
   {{end}}
 </section>
 
+{{if or .CanEdit .List.EnabledCount}}
+<section class="card">
+  <details class="edit"{{if and .CanEdit (not .List.EntryCount)}} open{{end}}>
+    <summary>Импорт и экспорт</summary>
+    <p class="muted small">Файл — обычный текст: запись на строку, комментарий после «&nbsp;#&nbsp;». Им можно поделиться с другим listok. Выключенные записи в файл не попадают.</p>
+    {{if .List.EnabledCount}}
+    <p><a class="small-btn" href="/lists/{{.List.Slug}}/export" download>Скачать {{.List.Slug}}.txt</a></p>
+    {{end}}
+    {{if .CanEdit}}
+    <form class="import-form" hx-post="/lists/{{.List.Slug}}/import" hx-encoding="multipart/form-data" hx-target="#import-result">
+      <input type="file" name="file" accept=".txt,.lst,text/plain" required>
+      <button class="small-btn" type="submit">Импортировать</button>
+      <span class="muted small">записи добавятся к списку одной версией, её можно откатить</span>
+    </form>
+    <div id="import-result"></div>
+    {{end}}
+  </details>
+</section>
+{{end}}
+
 <section class="card">
   <form id="filters" class="filters" hx-get="/lists/{{.List.Slug}}/rows" hx-trigger="input delay:250ms, change, search" hx-target="#rows" hx-swap="outerHTML">
     <input type="search" name="q" value="{{.Query}}" placeholder="Поиск по значению или комментарию" autocomplete="off">
