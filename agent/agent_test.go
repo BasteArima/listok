@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -11,6 +12,22 @@ import (
 func TestVersion(t *testing.T) {
 	if Version == "" || strings.ContainsAny(Version, " '\n") {
 		t.Fatalf("версия агента %q", Version)
+	}
+}
+
+// TestNoForwardCalls — функция агента не вызывает функцию, объявленную ниже по файлу. В ucode имя
+// внутри функции связывается при компиляции: ниже объявленное ещё не видно, и под 'use strict'
+// вызов падает только при исполнении («access to undeclared variable»), а ucode -c его пропускает.
+func TestNoForwardCalls(t *testing.T) {
+	decl := map[string]int{}
+	for _, m := range regexp.MustCompile(`(?m)^function (\w+)\(`).FindAllStringSubmatchIndex(Code, -1) {
+		decl[Code[m[2]:m[3]]] = m[0]
+	}
+	for name, at := range decl {
+		for _, m := range regexp.MustCompile(`\b`+name+`\(`).FindAllStringIndex(Code[:at], -1) {
+			line := strings.Count(Code[:m[0]], "\n") + 1
+			t.Errorf("строка %d: вызов %s до её объявления", line, name)
+		}
 	}
 }
 

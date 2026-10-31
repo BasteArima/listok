@@ -23,7 +23,7 @@
 import * as fs from 'fs';
 import { cursor } from 'uci';
 
-const VERSION = '0.3.0';
+const VERSION = '0.3.1';
 const UCI_DIR = getenv('LISTOK_UCI_DIR') || '/etc/config';
 const STATE_DIR = getenv('LISTOK_STATE_DIR') || '/etc/listok';
 const TMP_DIR = getenv('LISTOK_TMP_DIR') || '/tmp/listok';
@@ -309,18 +309,6 @@ function forkop_busy() {
 	return pid != '' && fs.access('/proc/' + pid);
 }
 
-// apply — применить изменившиеся секции. before — probe до записи файлов (forkop 2) или null.
-// Возвращает {секция: {ok, error}}.
-function apply(sections, before) {
-	let res = {};
-	if (DRY_RUN) {
-		for (let s in sections)
-			res[s] = { ok: true };
-		return res;
-	}
-	return before ? apply_core(sections, before) : apply_list_update(sections);
-}
-
 // apply_core — forkop 2: ядро перечитывает файл само, как только он сменился, а подсети в nft
 // переносит служба forkop по событию ядра (D-036). Успех — ревизия rule set сменилась.
 function apply_core(sections, before) {
@@ -375,6 +363,18 @@ function apply_list_update(sections) {
 	for (let s in pending)
 		res[s] = { ok: false, error: 'forkop list_update не пересобрал rule-set секции ' + s };
 	return res;
+}
+
+// apply — применить изменившиеся секции. before — probe до записи файлов (forkop 2) или null.
+// Возвращает {секция: {ok, error}}.
+function apply(sections, before) {
+	let res = {};
+	if (DRY_RUN) {
+		for (let s in sections)
+			res[s] = { ok: true };
+		return res;
+	}
+	return before ? apply_core(sections, before) : apply_list_update(sections);
 }
 
 // post — JSON-запрос к /agent/v1. Возвращает {code, body}; code 0 — сеть недоступна.
@@ -617,9 +617,11 @@ function cmd_check(sections) {
 	exit(length(bad) ? 1 : 0);
 }
 
-// cmd_attach — подключить файлы listok к секциям forkop. Ссылки на фиды этого сервера (если их
-// вставляли вручную) заменяются локальным файлом. Если настройки изменились — единственный
-// перезапуск forkop; при переустановке с теми же секциями forkop не трогается.
+// cmd_attach — подключить файлы listok к секциям forkop. Путь к файлу остаётся ровно в одной опции
+// секции: в LuCI forkop 2 набор лежит либо в rule_set, либо в rule_set_with_subnets, и путь,
+// добавленный руками без флажка подсетей, иначе оказался бы в обеих. Ссылки на фиды этого сервера
+// (если их вставляли вручную) убираются. Если настройки изменились — единственный перезапуск forkop;
+// при переустановке с теми же секциями forkop не трогается.
 function cmd_attach(sections) {
 	let cfg = config();
 	let c = cursor(UCI_DIR), major = forkop_major(), changed = false;
@@ -627,20 +629,26 @@ function cmd_attach(sections) {
 		let sec = forkop_section(c, name);
 		if (!sec)
 			die('в forkop нет секции ' + name);
-		let key = list_key(c, sec, major), path = list_path(name);
-		let cur = as_list(c.get('forkop', sec, key));
-		let want = filter(cur, function(v) {
-			if (index(v, cfg.server + '/f/') == 0) {
-				print('listok: секция ' + name + ': ссылка на фид заменена локальным файлом\n');
-				return false;
-			}
-			return v != path;
-		});
-		push(want, path);
-		if (join('\n', cur) == join('\n', want))
-			continue;
-		c.set('forkop', sec, key, want);
-		changed = true;
+		let target = list_key(c, sec, major), path = list_path(name);
+		for (let key in LIST_KEYS) {
+			let cur = as_list(c.get('forkop', sec, key));
+			let want = filter(cur, function(v) {
+				if (index(v, cfg.server + '/f/') == 0) {
+					print('listok: секция ' + name + ': ссылка на фид заменена локальным файлом\n');
+					return false;
+				}
+				return v != path;
+			});
+			if (key == target)
+				push(want, path);
+			if (join('\n', cur) == join('\n', want))
+				continue;
+			if (length(want))
+				c.set('forkop', sec, key, want);
+			else
+				c.delete('forkop', sec, key);
+			changed = true;
+		}
 	}
 	if (!changed) {
 		print('listok: настройки forkop уже верные, перезапуск не нужен\n');
