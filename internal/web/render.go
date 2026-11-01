@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/BasteArima/listok/agent"
 	"github.com/BasteArima/listok/internal/entry"
 	"github.com/BasteArima/listok/internal/store"
 )
@@ -23,6 +24,8 @@ type page struct {
 	Error string
 	Form  map[string]string
 	Data  any
+	// Version и AgentVersion — сборка listok и версия агента, для строки внизу страницы.
+	Version, AgentVersion string
 }
 
 type statsData struct {
@@ -78,6 +81,29 @@ var funcs = template.FuncMap{
 		return string(w)
 	},
 	"ago": ago,
+	// plural — форма слова по числу: 1 запись, 2 записи, 5 записей.
+	"plural": func(n int, one, few, many string) string {
+		n %= 100
+		switch {
+		case n >= 11 && n <= 14:
+			return many
+		case n%10 == 1:
+			return one
+		case n%10 >= 2 && n%10 <= 4:
+			return few
+		}
+		return many
+	},
+	// actionLabel — тип секции forkop, как в LuCI: connection → Connection, dns → DNS.
+	"actionLabel": func(a string) string {
+		if a == "dns" {
+			return "DNS"
+		}
+		if a == "" {
+			return a
+		}
+		return strings.ToUpper(a[:1]) + a[1:]
+	},
 	// minutes — секунды → целые минуты (интервал опроса агента); seconds — Duration → секунды.
 	"minutes": func(sec int) int { return (sec + 30) / 60 },
 	"seconds": func(d time.Duration) int { return int(d.Seconds()) },
@@ -178,6 +204,10 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, name
 	}
 	if p.Form == nil {
 		p.Form = map[string]string{}
+	}
+	p.Version, p.AgentVersion = s.Version, agent.Version
+	if p.Version == "" {
+		p.Version = "dev"
 	}
 	pt, ok := s.pages[name]
 	if !ok {

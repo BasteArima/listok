@@ -17,11 +17,27 @@ import (
 
 // Агент на роутере: установщик /install/<token>, API /agent/v1. Описание: docs/router-agent.md, docs/api.md.
 
-// installView — команда установки, показывается один раз сразу после выдачи ссылки.
+// installView — готовая команда установки на странице роутера (D-039). Base, Host, Port и Token
+// нужны app.js: он пересобирает команду на лету, когда меняют режим или IP.
 type installView struct {
 	Command string
 	Mode    routers.AgentMode
 	Expires time.Time
+	Token   string
+	Base    string
+	Host    string
+	Port    string
+}
+
+func (s *Server) newInstallView(token string, expires time.Time, serverIP string, mode routers.AgentMode) *installView {
+	v := &installView{Command: s.installCommand(token, serverIP, mode), Mode: mode, Expires: expires, Token: token, Base: s.Config.BaseURL}
+	if pu, err := url.Parse(s.Config.BaseURL); err == nil {
+		v.Host, v.Port = pu.Hostname(), pu.Port()
+		if v.Port == "" {
+			v.Port = map[string]string{"https": "443", "http": "80"}[pu.Scheme]
+		}
+	}
+	return v
 }
 
 // installCommand — что выполнить на роутере. С serverIP curl идёт на адрес сервера в LAN (D-028):
@@ -56,7 +72,8 @@ func (s *Server) installCommand(token, serverIP string, mode routers.AgentMode) 
 	return "curl -fsSL" + resolve + " '" + u + "' | sh"
 }
 
-// createInstall — POST /routers/{id}/install: выдать одноразовую ссылку установки агента.
+// createInstall — POST /routers/{id}/install: «Новая ссылка» — выдать другую одноразовую ссылку
+// установки (прежняя перестаёт работать). Режим и IP проверяются и подставляются в команду.
 func (s *Server) createInstall(w http.ResponseWriter, r *http.Request) {
 	rt, ok := s.routerFromPath(w, r)
 	if !ok {
@@ -84,7 +101,7 @@ func (s *Server) createInstall(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
-	s.renderRouter(w, r, rt, http.StatusOK, "", nil, &installView{Command: s.installCommand(token, ip, mode), Mode: mode, Expires: expires})
+	s.renderRouter(w, r, rt, http.StatusOK, "", form, s.newInstallView(token, expires, ip, mode))
 }
 
 // revokeAgent — POST /routers/{id}/agent/revoke: забыть токен агента.
@@ -144,9 +161,6 @@ func (s *Server) installScript(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, routers.ErrNotFound):
 		shellError(w, http.StatusNotFound, "ссылка установки недействительна, просрочена или уже использована — выдайте новую на странице роутера")
 		return
-	case errors.Is(err, routers.ErrNoFeeds):
-		shellError(w, http.StatusConflict, err.Error())
-		return
 	case err != nil:
 		s.serverError(w, err)
 		return
@@ -197,6 +211,8 @@ type helloRequest struct {
 	Mode           string   `json:"mode"`
 	IntervalS      int      `json:"interval_s"`
 	Sections       []string `json:"sections"`
+	// ForkopSections — секции forkop на роутере (агент 0.4.0+); отсутствует — агент старее.
+	ForkopSections []store.ForkopSection `json:"forkop_sections"`
 }
 
 // helloFeed — фид в ответе hello. token нужен агенту, чтобы подхватить перевыпущенную ссылку:
@@ -227,7 +243,7 @@ func (s *Server) agentHello(w http.ResponseWriter, r *http.Request) {
 	feeds, err := s.Routers.Hello(r.Context(), rt, s.clientIP(r), store.AgentInfo{
 		AgentVersion: req.AgentVersion, ForkopVersion: req.ForkopVersion, SingboxVersion: req.SingboxVersion,
 		Mode: req.Mode, IntervalS: req.IntervalS,
-	})
+	}, req.ForkopSections)
 	if err != nil {
 		s.serverError(w, err)
 		return
@@ -275,11 +291,14 @@ func (s *Server) agentApplied(w http.ResponseWriter, r *http.Request) {
 type waitRequest struct {
 	Feeds map[string]string `json:"feeds"` // секция → ETag, который есть у агента
 	Wait  int               `json:"wait"`  // секунд; 0 — ответить сразу (режим poll)
+	// Added — агент подключает новые секции сам (0.4.0+): сообщать о них в ответе.
+	Added bool `json:"added"`
 }
 
 type waitResponse struct {
 	Changed []string `json:"changed"`
 	Gone    []string `json:"gone"`
+	Added   []string `json:"added"`
 }
 
 // agentWait — POST /agent/v1/wait: long-poll по всем секциям роутера сразу.
@@ -293,7 +312,7 @@ func (s *Server) agentWait(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	wait := min(time.Duration(max(req.Wait, 0))*time.Second, s.Config.LongPollMax)
-	res, err := s.Routers.Wait(r.Context(), rt, s.clientIP(r), req.Feeds, wait)
+	res, err := s.Routers.Wait(r.Context(), rt, s.clientIP(r), req.Feeds, wait, req.Added)
 	if errors.Is(err, routers.ErrBadReport) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -305,12 +324,11 @@ func (s *Server) agentWait(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
-	resp := waitResponse{Changed: res.Changed, Gone: res.Gone}
-	if resp.Changed == nil {
-		resp.Changed = []string{}
-	}
-	if resp.Gone == nil {
-		resp.Gone = []string{}
+	resp := waitResponse{Changed: res.Changed, Gone: res.Gone, Added: res.Added}
+	for _, l := range []*[]string{&resp.Changed, &resp.Gone, &resp.Added} {
+		if *l == nil {
+			*l = []string{}
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)

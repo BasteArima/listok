@@ -15,19 +15,22 @@
 <body>
 {{if .User}}
 <header class="topbar">
-  <nav class="topnav">
-    <a class="brand" href="/">listok</a>
-    <a href="/lists">Списки</a>
-    <a href="/routers">Роутеры</a>
-  </nav>
-  <nav class="topnav">
-    <span class="muted">{{.User.Username}}</span>
-    <form method="post" action="/logout"><button class="link" type="submit">Выйти</button></form>
-  </nav>
+  <div class="topbar-in">
+    <nav class="topnav">
+      <a class="brand" href="/">listok</a>
+      <a href="/lists">Списки</a>
+      <a href="/routers">Роутеры</a>
+    </nav>
+    <nav class="topnav">
+      <span class="muted">{{.User.Username}}</span>
+      <form method="post" action="/logout"><button class="link" type="submit">Выйти</button></form>
+    </nav>
+  </div>
 </header>
 {{end}}
 <main class="{{if .User}}page{{else}}center{{end}}">
 {{template "content" .}}
+{{if .User}}<footer class="muted small build">listok {{if eq .Version "dev"}}dev{{else}}<a href="https://github.com/BasteArima/listok/commit/{{.Version}}" rel="noreferrer">{{.Version}}</a>{{end}} · агент {{.AgentVersion}}</footer>{{end}}
 </main>
 <div id="toast" class="toast" role="status" hidden></div>
 </body>

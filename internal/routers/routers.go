@@ -23,6 +23,9 @@ var (
 
 var sectionRe = regexp.MustCompile(`^[A-Za-z0-9_]{1,32}$`)
 
+// ValidSection — название секции forkop подходит для listok (в имени файла и в sh-установщике).
+func ValidSection(name string) bool { return sectionRe.MatchString(name) }
+
 type Service struct {
 	st       *store.Store
 	builder  *feed.Builder

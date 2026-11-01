@@ -30,6 +30,7 @@ type Deps struct {
 	Routers *routers.Service
 	Config  config.Config
 	Log     *slog.Logger
+	Version string // сборка listok (main.version): короткий sha коммита или dev
 }
 
 type Server struct {
@@ -100,9 +101,8 @@ func New(d Deps) (*Server, error) {
 	authed("POST /routers/{id}/install", s.createInstall)
 	authed("POST /routers/{id}/agent/revoke", s.revokeAgent)
 	authed("POST /routers/{id}/feeds", s.createFeed)
-	authed("POST /feeds/{id}/lists", s.feedAction(func(r *http.Request, u store.User, id int64) (int64, error) {
-		return s.Routers.SetFeedLists(r.Context(), u, id, listIDsFrom(r))
-	}))
+	authed("GET /routers/{id}/sections/{feed}", s.sectionCardGet)
+	authed("POST /feeds/{id}/lists", s.feedLists)
 	authed("POST /feeds/{id}/toggle", s.feedAction(func(r *http.Request, u store.User, id int64) (int64, error) {
 		return s.Routers.SetFeedEnabled(r.Context(), u, id, r.PostFormValue("enabled") == "1")
 	}))

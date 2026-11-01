@@ -95,7 +95,7 @@ func run(log *slog.Logger) error {
 	listsSvc.OnChange(notifier.Notify) // будит long-poll фидов
 	routerSvc := routers.New(st, builder, notifier, nil)
 
-	handler, err := web.New(web.Deps{DB: conn, Store: st, Auth: authSvc, Lists: listsSvc, Routers: routerSvc, Config: cfg, Log: log})
+	handler, err := web.New(web.Deps{DB: conn, Store: st, Auth: authSvc, Lists: listsSvc, Routers: routerSvc, Config: cfg, Log: log, Version: version})
 	if err != nil {
 		return err
 	}

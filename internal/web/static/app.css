@@ -39,10 +39,14 @@ h1 { font-size: 1.4rem; margin: 0 0 .75rem; }
 
 .muted { color: var(--muted); }
 
-.topbar {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: .75rem 16px; border-bottom: 1px solid var(--border); background: var(--surface);
+.topbar { border-bottom: 1px solid var(--border); background: var(--surface); }
+/* Шапка на всю ширину, а содержимое — по ширине основной колонки (.page). */
+.topbar-in {
+  max-width: 960px; margin: 0 auto; padding: .75rem 16px;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem 1rem;
 }
+.build { text-align: center; margin-top: 2rem; }
+.build a { color: inherit; }
 .topnav { display: flex; align-items: center; gap: 1rem; }
 .topnav form { margin: 0; }
 .brand { font-weight: 700; color: var(--text); text-decoration: none; letter-spacing: .02em; }
@@ -209,10 +213,92 @@ tr.off td.value, tr.off td.comment-cell { opacity: var(--row-off); text-decorati
 details summary { cursor: pointer; color: var(--muted); }
 details[open] > summary { margin-bottom: .6rem; }
 details.edit form + form { margin-top: .75rem; }
-.import-form { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; }
+.file-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; }
+.file-card p { margin: .5rem 0 0; }
+.import-form { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; margin: 0; flex: 1 1 18rem; }
 .import-form input[type=file] { width: auto; flex: 1 1 14rem; max-width: 100%; }
 #import-result:not(:empty) { margin-top: .75rem; }
 .feed details { margin-top: .9rem; }
 .section-input { width: 10rem; }
 ol.small { padding-left: 1.2rem; margin: 0 0 .5rem; }
 .feed-lists > button, .feed-lists > div > button { justify-self: start; }
+
+/* ---- страница роутера: секции forkop (docs/ui.md, «Роутеры») ---- */
+.page > .crumbs { margin: 0 0 .75rem; }
+.page > .card + .block-head, .page > .block-head + .card, .page > .block-head + .section-card,
+.page > .section-card + .section-card, .page > .section-card + .card, .page > .card + .section-card,
+.page > .card + details.card, .page > details.card + details.card, .page > .section-card + details.card { margin-top: 16px; }
+.page > .card + .block-head, .page > .section-card + .block-head { margin-top: 28px; }
+.block-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: .25rem 1rem; }
+.block-head h2 { margin: 0; font-size: 1.15rem; }
+.block-head form { margin: 0; }
+/* «Изменить» — кнопка в углу карточки; открытая заменяет заголовок формой и подписана «Отмена». */
+.router-head { position: relative; }
+.router-title { display: grid; gap: .3rem; padding-right: 7rem; }
+.router-title h1, .router-title p { margin: 0; }
+.router-edit > summary { position: absolute; top: 1.25rem; right: 1.25rem; list-style: none; }
+.router-edit > summary::-webkit-details-marker { display: none; }
+.router-edit .if-open, .router-edit[open] .if-closed { display: none; }
+.router-edit[open] .if-open { display: inline; }
+.router-head:has(.router-edit[open]) .router-title { display: none; }
+.router-edit h2 { margin: 0 0 1rem; font-size: 1.15rem; line-height: 2rem; }
+.edit-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem; margin-top: 1rem; }
+.edit-actions form { margin: 0; }
+.dot { display: inline-block; width: .5rem; height: .5rem; border-radius: 50%; background: var(--muted); margin-right: .4rem; vertical-align: .1em; }
+.ok-dot { background: var(--ok); }
+.warn-dot { background: var(--warn); }
+.bad-dot { background: var(--danger-text); }
+.err-text { color: var(--danger-text); font-weight: 600; }
+.section-card { display: grid; gap: .85rem; }
+.section-off { border-style: dashed; }
+.section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem 1rem; }
+.section-head p { margin: .3rem 0 0; }
+.section-head form { margin: 0; }
+.section-name { display: flex; align-items: center; gap: .6rem; }
+.section-name h3 { margin: 0; font-size: 1.05rem; }
+.section-off h3 { color: var(--muted); }
+.tag { font-size: .75rem; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 0 .45rem; }
+.section-card .alert { margin: 0; }
+.section-card > p { margin: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: .5rem; margin: 0; }
+.chip {
+  display: inline-flex; align-items: center; gap: .5rem; min-height: 2.25rem; padding: 0 .8rem;
+  border: 1px solid var(--border); border-radius: 999px; cursor: pointer; font-size: .9rem; user-select: none;
+}
+.chip input { margin: 0; width: 1rem; height: 1rem; accent-color: var(--accent); }
+.chip:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.chip:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.section-foot { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 1rem; }
+.section-foot form { margin: 0; }
+.section-foot button.link { color: var(--muted); }
+.section-foot button.link:hover { color: var(--danger-text); }
+.steps h2 { margin: 0 0 1rem; font-size: 1.15rem; }
+.step { display: grid; grid-template-columns: 2rem minmax(0, 1fr); gap: .85rem; }
+.step + .step { margin-top: 1.25rem; }
+.step p { margin: .2rem 0 .75rem; }
+.num { width: 2rem; height: 2rem; border-radius: 50%; display: grid; place-items: center; font-weight: 700; background: var(--border); color: var(--muted); }
+.num.on { background: var(--accent); color: var(--accent-text); }
+.agent-card { display: grid; gap: .6rem; }
+.agent-card > p { margin: 0; }
+.agent-form { display: grid; gap: .4rem; margin: 0; }
+.agent-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; }
+.field-label { min-width: 12rem; font-size: .9rem; }
+.agent-form .hint { margin: 0 0 .6rem; }
+.agent-form .interval { display: flex; align-items: center; gap: .4rem; font-size: .9rem; }
+.agent-form:not(:has(input[value="poll"]:checked)) .interval { display: none; }
+.ip-input { flex: 0 1 16rem; }
+.ip-input[aria-invalid="true"] { border-color: var(--danger-text); }
+.num-input { width: 6rem; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; padding: 0; margin: 0; overflow: hidden; }
+.seg legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.seg label { display: flex; align-items: center; gap: .4rem; padding: .45rem .8rem; cursor: pointer; font-size: .9rem; color: var(--muted); white-space: nowrap; }
+.seg label:has(input:checked) { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--text); }
+.install-box { border: 1px solid var(--border); border-radius: var(--radius); padding: .85rem; display: grid; gap: .5rem; margin-top: .25rem; }
+.install-box button.link { font-size: inherit; }
+.install-box p { margin: 0; }
+details.card > summary { list-style-position: inside; }
+.manual-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .75rem; margin: .9rem 0 .5rem; }
+.manual-form label { display: grid; gap: .3rem; }
+.links { display: grid; gap: .75rem; margin-top: .9rem; }
+.link-row { display: grid; gap: .3rem; }
+.link-row .copy-row form { margin: 0; }

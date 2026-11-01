@@ -18,7 +18,9 @@ command -v curl >/dev/null || die "нет curl"
 mkdir -p /tmp/listok
 cat > /tmp/listok/listok-agent <<'LISTOK_AGENT_EOF'
 [[.AgentCode]]LISTOK_AGENT_EOF
-ucode /tmp/listok/listok-agent check $SECTIONS || exit 1
+if [ -n "$SECTIONS" ]; then
+	ucode /tmp/listok/listok-agent check $SECTIONS || exit 1
+fi
 
 STAMP=$(date +%Y%m%d-%H%M%S)
 cp /etc/config/forkop "/etc/config/forkop.bak-listok-$STAMP"
@@ -61,7 +63,12 @@ done
 # forkop 2 — rule_set_with_subnets), ссылки на фиды этого сервера, если их вставляли вручную,
 # убираются. Локальный путь forkop читает синхронно при старте, без гонки (forkop-integration.md).
 # Если нужное уже стоит (переустановка), forkop не трогаем и не перезапускаем.
-/usr/bin/listok-agent attach $SECTIONS || die "не удалось подключить списки к forkop — бэкап: /etc/config/forkop.bak-listok-$STAMP"
+# Без секций forkop не трогается вовсе: их подключают потом в интерфейсе listok, агент сделает это сам.
+if [ -n "$SECTIONS" ]; then
+	/usr/bin/listok-agent attach $SECTIONS || die "не удалось подключить списки к forkop — бэкап: /etc/config/forkop.bak-listok-$STAMP"
+else
+	say "секций пока нет: отметьте списки для секций на странице роутера в listok — агент подключит их сам"
+fi
 /etc/init.d/listok-agent enable
 /etc/init.d/listok-agent restart
 

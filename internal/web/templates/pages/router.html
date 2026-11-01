@@ -1,189 +1,165 @@
 {{define "content"}}
 {{with .Data}}
-<section class="card">
-  <div class="list-head">
-    <div>
-      <h1>{{.Router.Name}}</h1>
-      {{if .Router.Notes}}<p class="muted">{{.Router.Notes}}</p>{{end}}
-    </div>
-    <div class="stats muted small">
-      <div>владелец {{.Router.OwnerName}}</div>
-      <div>последний опрос: {{with .Router.LastFetchAt}}{{ago .}}{{else}}не было{{end}}</div>
-    </div>
-  </div>
-  {{with $.Error}}{{template "form-error" .}}{{end}}
-  <details class="edit">
-    <summary>Изменить или удалить</summary>
-    <form class="form-grid" method="post" action="/routers/{{.Router.ID}}">
+<p class="crumbs muted small"><a href="/routers">Роутеры</a> / {{.Router.Name}}</p>
+{{with $.Error}}{{template "form-error" .}}{{end}}
+
+<section class="card router-head">
+  {{/* «Изменить» — кнопка в углу; открытая, она заменяет заголовок формой и становится «Отменой». */}}
+  <details class="router-edit"{{if $.Error}}{{if $.Form.name}} open{{end}}{{end}}>
+    <summary class="small-btn"><span class="if-closed">Изменить</span><span class="if-open">Отмена</span></summary>
+    <h2>Роутер</h2>
+    <form id="router-edit" class="form-grid" method="post" action="/routers/{{.Router.ID}}">
       <label>Название <input name="name" required maxlength="60" value="{{.Router.Name}}"></label>
-      <label>Заметки <input name="notes" maxlength="500" value="{{.Router.Notes}}"></label>
-      <div><button class="primary" type="submit">Сохранить</button></div>
+      <label>Заметки <input name="notes" maxlength="500" value="{{.Router.Notes}}" placeholder="необязательно"></label>
     </form>
-    <form method="post" action="/routers/{{.Router.ID}}/delete" hx-post="/routers/{{.Router.ID}}/delete"
-      hx-confirm="Удалить роутер «{{.Router.Name}}» и все его фиды? Ссылки перестанут работать сразу.">
-      <button class="small-btn danger" type="submit">Удалить роутер</button>
-    </form>
+    <div class="edit-actions">
+      <button class="primary" type="submit" form="router-edit">Сохранить</button>
+      <form method="post" action="/routers/{{.Router.ID}}/delete" hx-post="/routers/{{.Router.ID}}/delete"
+        hx-confirm="Удалить роутер «{{.Router.Name}}»? Его секции перестанут получать списки сразу.">
+        <button class="small-btn danger" type="submit">Удалить роутер</button>
+      </form>
+    </div>
   </details>
+  <div class="router-title">
+    <h1>{{.Router.Name}}</h1>
+    {{if .Router.Notes}}<p class="muted">{{.Router.Notes}}</p>{{end}}
+    <div class="small">
+      {{if not .Router.HasAgent}}<span class="dot"></span><span class="muted">Агент не установлен{{with .Router.LastFetchAt}} · роутер забирал списки {{ago .}}{{end}}</span>
+      {{else if .AgentOnline}}<span class="dot ok-dot"></span><span class="plus">Агент на связи</span> <span class="muted">· {{ago .Router.LastSeenAt}} · изменения доходят {{if eq .Router.AgentMode "poll"}}при проверке раз в {{minutes .Router.AgentIntervalS}} мин{{else}}за секунды{{end}}</span>
+      {{else if .Router.LastSeenAt}}<span class="dot warn-dot"></span><span class="warn">Агент не на связи</span> <span class="muted">· был {{ago .Router.LastSeenAt}}</span>
+      {{else}}<span class="dot warn-dot"></span><span class="warn">Агент ещё не выходил на связь</span>{{end}}
+    </div>
+    {{if .Router.HasAgent}}<div class="muted small">
+      {{with .Router.ForkopVersion}}forkop {{.}} · {{end}}{{with .Router.SingboxVersion}}sing-box {{.}} · {{end}}агент {{or .Router.AgentVersion "—"}}{{if and .Router.AgentVersion (ne .Router.AgentVersion .AgentVersion)}} <span class="warn">(есть {{.AgentVersion}} — переустановите)</span>{{end}}
+    </div>{{end}}
+  </div>
 </section>
 
-<section class="card" id="agent">
-  <div class="list-head">
+{{if .Router.HasAgent}}
+<div class="block-head">
+  <h2>Секции forkop</h2>
+  <span class="muted small">{{if .SectionsKnown}}список пришёл с роутера · {{end}}отметки сохраняются и применяются сразу</span>
+</div>
+{{if not .SectionsKnown}}<p class="card muted small">Агент {{or .Router.AgentVersion ""}} не присылает список секций forkop. Переустановите агент (нужен {{.AgentVersion}}), чтобы секции появились здесь сами и подключались кнопкой.{{if not .Sections}} Пока можно подключить секцию вручную — внизу страницы.{{end}}</p>{{end}}
+{{range .Sections}}{{template "section-card" .}}{{end}}
+{{else}}
+<section class="card steps">
+  <h2>Подключение за два шага</h2>
+  <div class="step">
+    <span class="num on">1</span>
     <div>
-      <h2>Агент на роутере</h2>
-      {{if .Router.HasAgent}}
-        {{with .Router.LastSeenAt}}<div class="small"><span class="plus">● на связи</span> <span class="muted">· {{ago .}}</span></div>
-        {{else}}<div class="small"><span class="muted">● установлен, ещё не выходил на связь</span></div>{{end}}
-      {{else}}<div class="small muted">не установлен: роутер забирает фиды сам, раз в сутки</div>{{end}}
+      <b>Поставьте агент на роутер</b>
+      <p class="muted small">Выполните команду ниже на роутере. Агент сам узнает секции forkop и будет применять изменения без перезапуска sing-box.</p>
+      {{template "agent-form" $}}
     </div>
-    {{if .Router.HasAgent}}
-    <div class="stats muted small">
-      <div>агент {{or .Router.AgentVersion "—"}}{{if and .Router.AgentVersion (ne .Router.AgentVersion .AgentVersion)}} <span class="warn">(есть {{.AgentVersion}})</span>{{end}}</div>
-      {{if eq .Router.AgentMode "poll"}}<div>проверка раз в {{minutes .Router.AgentIntervalS}} мин</div>{{else if eq .Router.AgentMode "wait"}}<div>мгновенно (long-poll)</div>{{end}}
-      {{with .Router.ForkopVersion}}<div>forkop {{.}}</div>{{end}}
-      {{with .Router.SingboxVersion}}<div>sing-box {{.}}</div>{{end}}
-      {{with .Router.LastIP}}<div class="mono">{{.}}</div>{{end}}
+  </div>
+  <div class="step">
+    <span class="num">2</span>
+    <div>
+      <b>Отметьте списки для секций</b>
+      <p class="muted small">Секции появятся здесь, как только агент выйдет на связь: main, geo и другие придут с роутера сами — вводить их названия не нужно.</p>
+    </div>
+  </div>
+</section>
+{{if .Sections}}
+<div class="block-head"><h2>Секции без агента</h2><span class="muted small">роутер забирает их по ссылке раз в сутки</span></div>
+{{range .Sections}}{{template "section-card" .}}{{end}}
+{{end}}
+{{end}}
+
+{{if .Router.HasAgent}}
+<section class="card agent-card" id="agent">
+  <div class="block-head">
+    <h2>Агент</h2>
+    <form method="post" action="/routers/{{.Router.ID}}/agent/revoke" hx-post="/routers/{{.Router.ID}}/agent/revoke"
+      hx-confirm="Отвязать агент? Его токен перестанет работать: статус пропадёт, новые секции не подключатся. Списки на роутере останутся как есть. Удалить сам агент с роутера: listok-agent uninstall.">
+      <button class="small-btn danger" type="submit">Отвязать</button>
+    </form>
+  </div>
+  {{template "agent-form" $}}
+</section>
+{{end}}
+
+<details class="card">
+  <summary><b>Подключить секцию вручную</b> <span class="muted small">· {{if .Router.HasAgent}}если нужной секции нет в списке выше{{else}}без агента: ссылка в LuCI, обновление раз в сутки{{end}}</span></summary>
+  <form class="manual-form" method="post" action="/routers/{{.Router.ID}}/feeds">
+    <label>Секция forkop <span class="muted small">как в колонке «Name» на вкладке Sections в LuCI</span>
+      <input name="section" required maxlength="32" pattern="[A-Za-z0-9_]+" value="{{$.Form.section}}" class="mono section-input" autocapitalize="none" spellcheck="false" placeholder="main">
+    </label>
+    <button class="small-btn" type="submit">Подключить</button>
+  </form>
+  {{if not .Router.HasAgent}}<p class="muted small">Потом отметьте списки в карточке секции, скопируйте ссылку ниже и вставьте её в LuCI → forkop → секция → «Наборы правил» с флажком «Учитывать IP-адреса и подсети» (в forkop 1.x — «Domain and IP lists»).</p>{{end}}
+</details>
+
+{{if .Feeds}}
+<details class="card">
+  <summary><b>Ссылки для forkop без агента</b> <span class="muted small">· секретные: кто знает ссылку, видит содержимое</span></summary>
+  <div class="links">
+    {{range .Feeds}}
+    <div class="link-row">
+      <span class="mono">{{.Section}}</span>
+      <div class="copy-row">
+        <input class="mono" readonly value="{{.URL}}" id="url-{{.ID}}" aria-label="Ссылка секции {{.Section}}">
+        <button class="small-btn" type="button" data-copy="url-{{.ID}}">Копировать</button>
+        <form method="post" action="/feeds/{{.ID}}/regenerate" hx-post="/feeds/{{.ID}}/regenerate"
+          hx-confirm="Выпустить новую ссылку для {{.Section}}? Старая перестанет работать сразу. Агент подхватит новую сам, в LuCI её нужно заменить вручную.">
+          <button class="small-btn" type="submit">Новая</button>
+        </form>
+      </div>
     </div>
     {{end}}
   </div>
+</details>
+{{end}}
 
-  {{with .Install}}
-  <div class="result">
-    <p><b>Выполните на роутере</b> (SSH под root). Ссылка одноразовая, действует до {{.Expires.Format "02.01 15:04"}}:</p>
+{{if .Fetches}}
+<details class="card">
+  <summary><b>Журнал</b> <span class="muted small">· последние опросы роутера</span></summary>
+  <div class="table-wrap">
+  <table class="small">
+    <thead><tr><th>Когда</th><th>Секция</th><th>IP</th><th>Ответ</th><th>Версия</th></tr></thead>
+    <tbody>
+    {{range .Fetches}}
+      <tr><td>{{ago .At}}</td><td class="mono">{{.Section}}</td><td class="mono">{{.IP}}</td><td>{{if eq .Status 304}}без изменений{{else}}скачал{{end}}</td>
+        <td class="mono">{{.ETag}}{{if .Fresh}} <span class="plus">✓</span>{{end}}</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+</details>
+{{end}}
+{{end}}
+{{end}}
+
+{{/* Установка агента: готовая команда видна всегда (D-039), app.js пересобирает её на лету, когда меняют
+     режим или IP. «Другая ссылка» отправляет форму: прежняя ссылка перестаёт работать. */}}
+{{define "agent-form"}}
+{{with .Data}}{{with .Install}}
+<form class="agent-form" method="post" action="/routers/{{$.Data.Router.ID}}/install"
+  data-install data-base="{{.Base}}" data-token="{{.Token}}" data-host="{{.Host}}" data-port="{{.Port}}">
+  <div class="agent-row">
+    <span class="field-label">Режим</span>
+    <fieldset class="seg">
+      <legend>Режим агента</legend>
+      <label><input type="radio" name="mode" value="wait"{{if ne $.Form.mode "poll"}} checked{{end}}> Мгновенно</label>
+      <label><input type="radio" name="mode" value="poll"{{if eq $.Form.mode "poll"}} checked{{end}}> Экономно</label>
+    </fieldset>
+    <label class="interval">раз в <input name="interval" type="number" min="1" max="1440" value="{{or $.Form.interval "5"}}" class="num-input" aria-label="Интервал проверки, минут"> мин</label>
+  </div>
+  <p class="muted small hint">Мгновенно — изменения доходят за секунды, агент держит одно соединение с сервером. Экономно — для слабых роутеров: короткая проверка раз в N минут.</p>
+  <div class="agent-row">
+    <label class="field-label" for="server-ip">IP сервера в сети роутера</label>
+    <input id="server-ip" name="server_ip" value="{{$.Form.server_ip}}" placeholder="например 192.168.1.10" autocomplete="off" spellcheck="false" class="ip-input">
+  </div>
+  <p class="muted small hint">Только если роутер в одной сети с сервером listok: иначе, обращаясь к своему внешнему адресу, он попадёт в собственный LuCI.</p>
+  <div class="install-box">
     <div class="copy-row">
-      <input class="mono" readonly value="{{.Command}}" id="install-cmd">
+      <input class="mono" readonly value="{{.Command}}" id="install-cmd" aria-label="Команда установки агента">
       <button class="small-btn" type="button" data-copy="install-cmd">Копировать</button>
     </div>
-    <p class="muted small">Установщик сделает бэкап настроек forkop, заменит ссылки на фиды listok локальными файлами и один раз перезапустит forkop (при переустановке — только если настройки forkop меняются). Дальше изменения доезжают {{if eq .Mode.Mode "poll"}}при проверке раз в {{minutes (seconds .Mode.Interval)}} мин{{else}}за секунды{{end}}, без перезапуска sing-box.</p>
+    <p class="muted small">Выполните на роутере под root. Ссылка одноразовая, действует до {{.Expires.Format "02.01 15:04"}} · <button class="link small" type="submit">другая ссылка</button></p>
+    <p class="muted small">Установщик сделает бэкап настроек forkop и подключит секции: forkop перезапустится один раз, только если его настройки меняются.</p>
   </div>
-  {{else}}
-  <details class="edit"{{if $.Form.server_ip}} open{{end}}>
-    <summary>{{if .Router.HasAgent}}Переустановить агент{{else}}Установить агент{{end}}</summary>
-    <form class="form-grid" method="post" action="/routers/{{.Router.ID}}/install">
-      <label>Режим
-        <select name="mode">
-          <option value="wait" {{if ne $.Form.mode "poll"}}selected{{end}}>мгновенно (держит соединение)</option>
-          <option value="poll" {{if eq $.Form.mode "poll"}}selected{{end}}>экономно (проверка раз в N минут)</option>
-        </select>
-      </label>
-      <label>N, минут <span class="muted">(для экономного)</span>
-        <input name="interval" type="number" min="1" max="1440" value="{{or $.Form.interval "5"}}">
-      </label>
-      <p class="wide muted small">«Мгновенно»: изменения доходят за секунды, агент держит одно соединение с сервером (~5 МБ памяти, раз в минуту TLS-рукопожатие). «Экономно» — для слабых роутеров: одна короткая проверка раз в N минут.</p>
-      <label class="wide">IP сервера listok в сети роутера <span class="muted">(необязательно)</span>
-        <input name="server_ip" value="{{$.Form.server_ip}}" placeholder="например 192.168.1.10" autocomplete="off" spellcheck="false">
-        <span class="muted small">Нужно, если роутер в той же сети, что и сервер listok: обращаясь к своему внешнему адресу, роутер попадает в собственный LuCI. Для роутера в другой сети оставьте пустым.</span>
-      </label>
-      <div><button class="primary" type="submit">Выдать ссылку установки</button></div>
-    </form>
-    {{with .Router.InstallExpiresAt}}<p class="muted small">Есть невыполненная ссылка (до {{.Format "02.01 15:04"}}); новая её заменит.</p>{{end}}
-  </details>
-  {{end}}
-  {{if .Router.HasAgent}}
-  <form method="post" action="/routers/{{.Router.ID}}/agent/revoke" hx-post="/routers/{{.Router.ID}}/agent/revoke"
-    hx-confirm="Отвязать агент? Его токен перестанет работать: статус и отчёты пропадут. Фиды продолжат отдаваться. Удалить сам агент с роутера: listok-agent uninstall.">
-    <button class="small-btn" type="submit">Отвязать агент</button>
-  </form>
-  {{end}}
-</section>
-
-{{$lists := .Lists}}
-{{range .Feeds}}
-<section class="card feed" id="feed-{{.ID}}">
-  <div class="list-head">
-    <div>
-      <h2>Секция <span class="mono">{{.Section}}</span> {{if not .Enabled}}<span class="badge">выключен</span>{{end}}</h2>
-      <div class="small">
-        {{if eq .Status "fresh"}}<span class="plus">● забрал актуальную версию</span>
-        {{else if eq .Status "stale"}}<span class="warn">● забрал устаревшую версию</span>
-        {{else}}<span class="muted">● ещё не забирал</span>{{end}}
-        {{with .LastFetchAt}}<span class="muted">· {{ago .}}</span>{{end}}
-      </div>
-      {{if .AppliedAt}}<div class="small">
-        {{if not .AppliedOK}}<span class="warn">● агент не смог применить: {{.AppliedError}}</span>
-        {{else if eq .AppliedETag .Current.ETag}}<span class="plus">● применено на роутере</span>
-        {{else}}<span class="muted">● на роутере применена версия {{.AppliedETag}}</span>{{end}}
-        <span class="muted">· {{ago .AppliedAt}}</span>
-      </div>{{end}}
-    </div>
-    <div class="stats muted small">
-      <div><b>{{.Current.Entries}}</b> записей в фиде</div>
-      <div>версия <span class="mono">{{.Current.ETag}}</span></div>
-    </div>
-  </div>
-
-  <label>Ссылка для forkop (секретная: кто её знает, видит содержимое)
-    <div class="copy-row">
-      <input class="mono" readonly value="{{.URL}}" id="url-{{.ID}}">
-      <button class="small-btn" type="button" data-copy="url-{{.ID}}">Копировать</button>
-    </div>
-  </label>
-
-  <form class="feed-lists" method="post" action="/feeds/{{.ID}}/lists">
-    <div class="small muted">Списки в фиде:</div>
-    <div class="checks">
-      {{$set := .ListSet}}
-      {{range $lists}}<label class="inline"><input type="checkbox" name="list" value="{{.ID}}" {{if index $set .ID}}checked{{end}}> {{.Title}} <span class="muted small">({{.EnabledCount}})</span></label>{{end}}
-    </div>
-    <button class="small-btn" type="submit">Сохранить состав</button>
-  </form>
-
-  <div class="feed-actions">
-    <form method="post" action="/feeds/{{.ID}}/toggle">
-      <input type="hidden" name="enabled" value="{{if .Enabled}}0{{else}}1{{end}}">
-      <button class="small-btn" type="submit">{{if .Enabled}}Выключить фид{{else}}Включить фид{{end}}</button>
-    </form>
-    <form method="post" action="/feeds/{{.ID}}/regenerate" hx-post="/feeds/{{.ID}}/regenerate"
-      hx-confirm="Выпустить новую ссылку? Старая перестанет работать сразу — её нужно будет заменить в forkop.">
-      <button class="small-btn" type="submit">Новая ссылка</button>
-    </form>
-    <form method="post" action="/feeds/{{.ID}}/delete" hx-post="/feeds/{{.ID}}/delete"
-      hx-confirm="Удалить фид секции {{.Section}}? Ссылка перестанет работать.">
-      <button class="small-btn danger" type="submit">Удалить фид</button>
-    </form>
-  </div>
-
-  {{if .Fetches}}
-  <details>
-    <summary class="small">Журнал опросов ({{len .Fetches}} последних)</summary>
-    <div class="table-wrap">
-    <table class="small">
-      <thead><tr><th>Когда</th><th>IP</th><th>Ответ</th><th>Версия</th></tr></thead>
-      <tbody>
-      {{$cur := .Current.ETag}}
-      {{range .Fetches}}
-        <tr><td>{{ago .At}}</td><td class="mono">{{.IP}}</td><td>{{if eq .Status 304}}без изменений{{else}}скачал{{end}}</td>
-          <td class="mono">{{.ETag}}{{if eq .ETag $cur}} <span class="plus">✓</span>{{end}}</td></tr>
-      {{end}}
-      </tbody>
-    </table>
-    </div>
-  </details>
-  {{end}}
-</section>
-{{end}}
-
-<section class="card">
-  <h2>Новый фид</h2>
-  <p class="muted small">Фид — это один <code>.lst</code> для одной секции forkop (обычно <code>main</code>; для отдельного выхода — например, <code>geo</code>). В него войдут включённые записи отмеченных списков.</p>
-  <form class="feed-lists" method="post" action="/routers/{{.Router.ID}}/feeds">
-    <label class="inline">Секция
-      <input name="section" required maxlength="32" pattern="[A-Za-z0-9_]+" value="{{or ($.Form.section) "main"}}" list="sections" class="section-input" autocapitalize="none" spellcheck="false">
-      <datalist id="sections"><option value="main"><option value="geo"></datalist>
-    </label>
-    {{if .Lists}}
-    <div class="checks">
-      {{range .Lists}}<label class="inline"><input type="checkbox" name="list" value="{{.ID}}"> {{.Title}} <span class="muted small">({{.EnabledCount}})</span></label>{{end}}
-    </div>
-    {{else}}<p class="muted small">Видимых списков нет — фид будет пустым (только служебная запись).</p>{{end}}
-    <div><button class="primary" type="submit">Создать фид</button></div>
-  </form>
-</section>
-
-<section class="card">
-  <h2>Как подключить к forkop</h2>
-  <p class="small"><b>С агентом</b> (рекомендуется): блок «Агент на роутере» выше → «Выдать ссылку установки» → выполнить команду на роутере. Агент держит файлы фидов локально и применяет изменения за секунды без перезапуска sing-box. Работает с forkop 1.x и 2.x; секция фида называется так же, как в колонке «Name» на вкладке Sections в LuCI forkop.</p>
-  <p class="small"><b>Без агента</b>: LuCI → forkop → секция → <b>Domain and IP lists</b> (в forkop 2 — <b>Наборы правил</b> с флажком «Учитывать IP-адреса и подсети») → вставить ссылку фида и нажать <b>+</b> → Save & Apply (если LuCI откатил изменение — «Apply unchecked»). forkop обновит список раз в сутки.</p>
-  <p class="warn small">Без агента после перезагрузки роутера список по ссылке может не подхватиться до повторного перезапуска forkop (гонка при старте).</p>
-</section>
-{{end}}
+</form>
+{{end}}{{end}}
 {{end}}

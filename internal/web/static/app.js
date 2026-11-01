@@ -90,4 +90,41 @@
   });
   // Таблицу перерисовали (поиск, действие, правка строки): пересчитать выбранное. Дёшево, поэтому на любой swap.
   document.addEventListener("htmx:afterSettle", updateSelection);
+
+  // Команда установки агента на странице роутера: пересобирается на лету из режима и IP, по тем же
+  // правилам, что installCommand в handlers_agent.go. Ссылка (токен) та же — меняются только параметры.
+  function validIP(v) {
+    const four = v.split(".");
+    if (four.length === 4) return four.every(function (p) { return /^\d{1,3}$/.test(p) && +p <= 255; });
+    return v.indexOf(":") >= 0 && /^[0-9a-fA-F:.]+$/.test(v);
+  }
+  function updateInstall(form) {
+    const d = form.dataset;
+    const mode = (form.querySelector("input[name=mode]:checked") || {}).value;
+    const ipField = form.querySelector("input[name=server_ip]");
+    const ip = ipField.value.trim();
+    const ipOK = ip === "" || validIP(ip);
+    ipField.setAttribute("aria-invalid", ipOK ? "false" : "true");
+    const q = []; // ключи по алфавиту, как url.Values.Encode
+    if (mode === "poll") {
+      const n = Math.min(Math.max(parseInt(form.querySelector("input[name=interval]").value, 10) || 5, 1), 1440);
+      q.push("interval=" + n * 60);
+    }
+    if (ip && ipOK) q.push("ip=" + encodeURIComponent(ip));
+    if (mode === "poll") q.push("mode=poll");
+    let url = d.base + "/install/" + d.token;
+    if (q.length) url += "?" + q.join("&");
+    const resolve = ip && ipOK ? " --resolve " + d.host + ":" + d.port + ":" + (ip.indexOf(":") >= 0 ? "[" + ip + "]" : ip) : "";
+    document.getElementById("install-cmd").value = "curl -fsSL" + resolve + " '" + url + "' | sh";
+  }
+  ["input", "change"].forEach(function (type) {
+    document.addEventListener(type, function (e) {
+      const form = e.target.closest("[data-install]");
+      if (form) updateInstall(form);
+    });
+  });
+  // Браузер восстанавливает введённые режим и IP при обновлении страницы — команда должна им соответствовать.
+  window.addEventListener("pageshow", function () {
+    document.querySelectorAll("[data-install]").forEach(updateInstall);
+  });
 })();

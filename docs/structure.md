@@ -13,7 +13,7 @@ listok/
 │   │   └── db.go                # открытие SQLite, PRAGMA, WAL
 │   ├── store/                   # доступ к данным: по файлу на агрегат (lists.go, entries.go, ...)
 │   ├── entry/                   # нормализация и классификация ввода, проверка покрытия
-│   ├── lists/                   # сервис списков: права (CanEdit), предпросмотр, добавление, правка; держит entry.Index; file.go — импорт и экспорт файлом
+│   ├── lists/                   # сервис списков: права (CanEdit), предпросмотр, добавление, правка; держит entry.Index; file.go — импорт и экспорт файлом; slug.go — адрес из названия
 │   ├── feed/                    # сборка фида (Builder, кеш по версиям списков), Render со сторожевой записью, токены; позже Notifier
 │   ├── history/                 # чистые функции: восстановить состояние на версию (Reconstruct), план отката (Diff)
 │   ├── proposal/                # предложения и их принятие
@@ -25,7 +25,8 @@ listok/
 │   │   ├── handlers_*.go
 │   │   ├── templates/           # layout.html, pages/*.html, partials/*.html
 │   │   └── static/              # htmx.min.js (2.0.11), app.js, app.css, favicon.svg; позже manifest.webmanifest, sw.js
-│   │   └── handlers_agent.go    # /install/<token>, /agent/v1 (hello, applied), выдача ссылки установки
+│   │   ├── handlers_agent.go    # /install/<token>, /agent/v1 (hello, wait, applied), выдача ссылки установки
+│   │   └── handlers_sections.go # карточки секций forkop на странице роутера, состав секции
 │   └── api/                     # JSON API /api/v1 (этап 5); отдача фидов /f/ и API агента пока в web
 ├── agent/
 │   ├── agent.go                 # go:embed файлов агента, Version, сборка установщика

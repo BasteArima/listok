@@ -120,7 +120,7 @@ func TestAgentInstallAndAPI(t *testing.T) {
 	expectRedirect(t, e.post(t, "/lists", url.Values{"title": {"Общий"}, "slug": {"common"}}), "/lists/common")
 	e.do(t, "POST", "/lists/common/entries", url.Values{"input": {"one.example"}})
 
-	// Роутер без фидов: ссылку выдать можно, но установка её не тратит и объясняет почему.
+	// Роутер без секций: агент ставится сразу, секции подключат потом в интерфейсе (D-038).
 	r := e.post(t, "/routers", url.Values{"name": {"дача"}})
 	emptyRouter := r.Header.Get("Location")
 	page := body(t, e.post(t, emptyRouter+"/install", url.Values{}))
@@ -128,12 +128,12 @@ func TestAgentInstallAndAPI(t *testing.T) {
 	if m == nil {
 		t.Fatal("нет команды установки на странице")
 	}
-	if r, b := getUA(t, e, "/install/"+m[1], "curl/8.12.1"); r.StatusCode != http.StatusConflict || !strings.Contains(b, "нет включённых фидов") {
-		t.Fatalf("установка без фидов: %d %s", r.StatusCode, b)
+	if r, b := getUA(t, e, "/install/"+m[1], "curl/8.12.1"); r.StatusCode != http.StatusOK || !strings.Contains(b, "SECTIONS=''") || !strings.Contains(b, "секций пока нет") {
+		t.Fatalf("установка без секций: %d %s", r.StatusCode, b)
 	}
 
 	routerPath, feedToken, _ := setupRouter(t, e, "common")
-	mustContain(t, body(t, e.get(t, routerPath)), "Агент на роутере", "не установлен", "Выдать ссылку установки")
+	mustContain(t, body(t, e.get(t, routerPath)), "Агент не установлен", "Подключение за два шага", `id="install-cmd"`, "/install/")
 
 	// Неверный IP сервера — ошибка формы. Верный — команда с --resolve и ?ip=.
 	if r := e.post(t, routerPath+"/install", url.Values{"server_ip": {"192.168.0"}}); r.StatusCode != http.StatusBadRequest {
@@ -143,6 +143,8 @@ func TestAgentInstallAndAPI(t *testing.T) {
 	host := strings.TrimPrefix(e.ts.URL, "http://")
 	hostname, port, _ := strings.Cut(host, ":")
 	mustContain(t, page, "curl -fsSL --resolve "+hostname+":"+port+":192.168.1.10 &#39;"+e.ts.URL+"/install/", "?ip=192.168.1.10&#39; | sh")
+	// Форма выдачи остаётся открытой с введёнными значениями: можно сразу выдать другую ссылку.
+	mustContain(t, page, `class="agent-form"`, `value="192.168.1.10"`, "другая ссылка")
 	m = installTokenRe.FindStringSubmatch(page)
 	install := "/install/" + m[1] + "?ip=192.168.1.10"
 
@@ -195,16 +197,22 @@ func TestAgentInstallAndAPI(t *testing.T) {
 		t.Fatalf("applied чужой секции: %d", r.StatusCode)
 	}
 	agentPost(t, e, agentToken, "/agent/v1/applied", map[string]any{"section": "main", "etag": etag, "ok": false, "error": "forkop list_update не пересобрал rule-set секции main"})
-	mustContain(t, body(t, e.get(t, routerPath)), "агент не смог применить: forkop list_update не пересобрал")
+	mustContain(t, body(t, e.get(t, routerPath)), "Ошибка на роутере", "forkop list_update не пересобрал")
 	if r, _ := agentPost(t, e, agentToken, "/agent/v1/applied", map[string]any{"section": "main", "etag": etag, "ok": true}); r.StatusCode != http.StatusNoContent {
 		t.Fatalf("applied: %d", r.StatusCode)
 	}
 	page = body(t, e.get(t, routerPath))
-	mustContain(t, page, "● на связи", "агент "+agent.Version, "forkop 1.0.5", "sing-box 1.14.1~extended~2.7.2<", "● применено на роутере", "Отвязать агент")
+	mustContain(t, page, "Агент на связи", "агент "+agent.Version, "forkop 1.0.5", "sing-box 1.14.1~extended~2.7.2 · агент", "Применено", "Отвязать")
+	if strings.Contains(page, "hx-trigger=\"load delay:2s\"") {
+		t.Fatal("применённая секция не должна переспрашивать сервер")
+	}
 
-	// Новая версия списка: на роутере ещё прежняя.
+	// Новая версия списка: на роутере ещё прежняя, карточка переспрашивает себя, пока не применится.
 	e.do(t, "POST", "/lists/common/entries", url.Values{"input": {"two.example"}})
-	mustContain(t, body(t, e.get(t, routerPath)), "на роутере применена версия "+html.EscapeString(etag))
+	page = body(t, e.get(t, routerPath))
+	mustContain(t, page, "Применяется…", "hx-trigger=\"load delay:2s\"")
+	f := feedIDRe.FindStringSubmatch(page)
+	mustContain(t, body(t, e.do(t, "GET", routerPath+"/sections/"+f[1], nil)), `id="section-`+f[1]+`"`, "Применяется…")
 
 	// Отвязать агент: его токен больше не работает.
 	expectHXRedirect(t, e.do(t, "POST", routerPath+"/agent/revoke", nil), routerPath)
@@ -320,10 +328,12 @@ func TestAgentWaitAllSections(t *testing.T) {
 		t.Fatalf("выключенный фид: %+v", resp)
 	}
 
-	// Ошибки запроса.
-	if _, _, code := agentWait(t, e, agentToken, map[string]string{}, 0); code != http.StatusBadRequest {
-		t.Fatalf("пустой список секций: %d", code)
+	// Без секций у агента можно (поставлен до подключения); старому агенту новые секции не сообщаются.
+	if resp, _, code := agentWait(t, e, agentToken, map[string]string{}, 0); code != 200 || len(resp.Added) != 0 {
+		t.Fatalf("пустой список секций: %d %+v", code, resp)
 	}
+
+	// Ошибки запроса.
 	if _, _, code := agentWait(t, e, agentToken, map[string]string{"bad name": ""}, 0); code != http.StatusBadRequest {
 		t.Fatalf("плохая секция: %d", code)
 	}
@@ -341,7 +351,7 @@ func TestAgentWaitAllSections(t *testing.T) {
 	if r.StatusCode != 200 || len(hello.Feeds) != 1 || hello.Feeds[0].Token == "" || hello.Feeds[0].Token == mainToken {
 		t.Fatalf("hello после перевыпуска: %d %s", r.StatusCode, b)
 	}
-	mustContain(t, body(t, e.get(t, routerPath)), "проверка раз в 10 мин")
+	mustContain(t, body(t, e.get(t, routerPath)), "при проверке раз в 10 мин")
 }
 
 func TestInstallModes(t *testing.T) {
@@ -354,7 +364,7 @@ func TestInstallModes(t *testing.T) {
 		t.Fatalf("интервал 0: %d", r.StatusCode)
 	}
 	page := body(t, e.post(t, routerPath+"/install", url.Values{"mode": {"poll"}, "interval": {"10"}}))
-	mustContain(t, page, "mode=poll", "interval=600", "при проверке раз в 10 мин")
+	mustContain(t, page, "mode=poll", "interval=600", `value="poll" checked`, `value="10"`)
 	_, script := installAgent(t, e, routerPath, url.Values{"mode": {"poll"}, "interval": {"10"}})
 	mustContain(t, script, "\toption mode 'poll'\n\toption interval '600'\n")
 	_, script = installAgent(t, e, routerPath, url.Values{})

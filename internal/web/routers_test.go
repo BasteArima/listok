@@ -15,7 +15,7 @@ import (
 
 var (
 	feedURLRe   = regexp.MustCompile(`/f/([0-9A-Za-z]{43})\.lst`)
-	feedIDRe    = regexp.MustCompile(`id="feed-(\d+)"`)
+	feedIDRe    = regexp.MustCompile(`id="section-(\d+)"`)
 	routerLocRe = regexp.MustCompile(`^/routers/(\d+)$`)
 )
 
@@ -93,7 +93,7 @@ func TestFeedServing(t *testing.T) {
 		t.Fatalf("If-None-Match: %d", r.StatusCode)
 	}
 	page := body(t, e.get(t, routerPath))
-	mustContain(t, page, "забрал актуальную версию", "без изменений", "скачал", "<b>4</b> записей")
+	mustContain(t, page, "забрал актуальную версию", "без изменений", "скачал", "4 записи")
 
 	// Правка списка → новый ETag, роутер «отстаёт», пока не заберёт.
 	e.do(t, "POST", "/lists/common/entries", url.Values{"input": {"discord.gg"}})

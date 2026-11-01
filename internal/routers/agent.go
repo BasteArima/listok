@@ -20,7 +20,6 @@ import (
 const InstallTTL = 24 * time.Hour
 
 var (
-	ErrNoFeeds      = errors.New("у роутера нет включённых фидов — сначала создайте фид")
 	ErrBadServerIP  = errors.New("IP сервера: адрес IPv4 или IPv6, например 192.168.1.10")
 	ErrUnauthorized = errors.New("неверный токен агента")
 	ErrBadReport    = errors.New("неверный отчёт агента")
@@ -85,7 +84,20 @@ func (s *Service) CreateInstall(ctx context.Context, u store.User, routerID int6
 		return "", time.Time{}, err
 	}
 	token, expires = feed.NewToken(), s.now().Add(InstallTTL)
-	return token, expires, s.st.SetInstallToken(ctx, r.ID, auth.HashToken(token), expires)
+	return token, expires, s.st.SetInstallToken(ctx, r.ID, token, auth.HashToken(token), expires)
+}
+
+// installReserve — ссылку, которой осталось жить меньше, страница роутера заменяет новой:
+// чтобы показанная команда не протухла, пока её копируют на роутер.
+const installReserve = time.Hour
+
+// InstallLink — действующая ссылка установки для показа на странице роутера (D-039). Нет ссылки,
+// её уже использовали или она скоро истечёт — выдаётся новая.
+func (s *Service) InstallLink(ctx context.Context, u store.User, r store.Router) (token string, expires time.Time, err error) {
+	if r.InstallToken != "" && r.InstallExpiresAt != nil && r.InstallExpiresAt.After(s.now().Add(installReserve)) {
+		return r.InstallToken, *r.InstallExpiresAt, nil
+	}
+	return s.CreateInstall(ctx, u, r.ID)
 }
 
 // InstallFeed — секция и токен фида для конфига агента.
@@ -113,7 +125,8 @@ func (s *Service) PeekInstall(ctx context.Context, token string) (store.Router, 
 	return r, err
 }
 
-// Install тратит ссылку установки и выпускает токен агента. Без включённых фидов ссылка не тратится.
+// Install тратит ссылку установки и выпускает токен агента. Секций может ещё не быть: агент
+// пришлёт секции forkop в hello, а подключённые потом в интерфейсе подхватит сам (wait → added).
 func (s *Service) Install(ctx context.Context, token string) (InstallBundle, error) {
 	r, err := s.PeekInstall(ctx, token)
 	if err != nil {
@@ -128,9 +141,6 @@ func (s *Service) Install(ctx context.Context, token string) (InstallBundle, err
 		if f.Enabled {
 			b.Feeds = append(b.Feeds, InstallFeed{Section: f.Section, Token: f.Token})
 		}
-	}
-	if len(b.Feeds) == 0 {
-		return InstallBundle{}, ErrNoFeeds
 	}
 	b.AgentToken = feed.NewToken()
 	if _, err := s.st.ConsumeInstallToken(ctx, auth.HashToken(token), auth.HashToken(b.AgentToken), s.now()); err != nil {
@@ -182,8 +192,27 @@ func clip(v string, n int) string {
 	return v
 }
 
-// Hello отмечает агента живым, запоминает версии и режим и возвращает включённые фиды роутера.
-func (s *Service) Hello(ctx context.Context, r store.Router, ip string, info store.AgentInfo) ([]HelloFeed, error) {
+// MaxForkopSections — сколько секций forkop принимается от агента.
+const MaxForkopSections = 64
+
+// cleanSections — секции forkop из hello: без пустых и повторов, имена и типы обрезаны.
+func cleanSections(in []store.ForkopSection) []store.ForkopSection {
+	out := []store.ForkopSection{}
+	seen := map[string]bool{}
+	for _, sec := range in {
+		name := clip(sec.Name, 64)
+		if name == "" || seen[name] || len(out) == MaxForkopSections {
+			continue
+		}
+		seen[name] = true
+		out = append(out, store.ForkopSection{Name: name, UCI: clip(sec.UCI, 64), Action: clip(sec.Action, 20)})
+	}
+	return out
+}
+
+// Hello отмечает агента живым, запоминает версии, режим и секции forkop (sections == nil —
+// агент до 0.4.0, их не присылает) и возвращает включённые фиды роутера.
+func (s *Service) Hello(ctx context.Context, r store.Router, ip string, info store.AgentInfo, sections []store.ForkopSection) ([]HelloFeed, error) {
 	mode := info.Mode
 	if mode != "wait" && mode != "poll" {
 		mode = ""
@@ -196,6 +225,11 @@ func (s *Service) Hello(ctx context.Context, r store.Router, ip string, info sto
 		SingboxVersion: clip(info.SingboxVersion, 60), Mode: mode, IntervalS: interval}
 	if err := s.st.TouchAgent(ctx, r.ID, s.now(), ip, info); err != nil {
 		return nil, err
+	}
+	if sections != nil {
+		if err := s.st.SetForkopSections(ctx, r.ID, cleanSections(sections)); err != nil {
+			return nil, err
+		}
 	}
 	feeds, err := s.st.FeedsByRouter(ctx, r.ID)
 	if err != nil {
@@ -232,18 +266,23 @@ func (s *Service) Applied(ctx context.Context, r store.Router, ip, section, etag
 	return s.st.TouchAgent(ctx, r.ID, s.now(), ip, store.AgentInfo{})
 }
 
-// WaitResult — какие секции агента изменились или пропали (фид удалён, выключен или его ссылку перевыпустили).
+// WaitResult — какие секции агента изменились или пропали (фид удалён или выключен) и какие
+// появились на сервере, а у агента их нет (секцию подключили в интерфейсе).
 type WaitResult struct {
 	Changed []string
 	Gone    []string
+	Added   []string
 }
 
 // Wait — long-poll по всем секциям роутера сразу (POST /agent/v1/wait). etags — версии, которые
 // есть у агента, по секциям. Отвечает, как только изменилась или пропала хоть одна секция,
 // либо по истечении wait (тогда результат пустой). wait = 0 — проверить и ответить сразу (режим poll).
-// Одно ожидание на роутер вместо отдельного на секцию: один curl на роутере.
-func (s *Service) Wait(ctx context.Context, r store.Router, ip string, etags map[string]string, wait time.Duration) (WaitResult, error) {
-	if len(etags) == 0 || len(etags) > 64 {
+// Одно ожидание на роутер вместо отдельного на секцию: один curl на роутере. Секций у агента
+// может не быть совсем (поставлен до подключения секций) — тогда он ждёт появления новых.
+// withAdded — агент умеет подключать новые секции (0.4.0+); агенту старее Added не отдаётся:
+// он не знает поля и вместо ожидания получал бы немедленный ответ раз за разом.
+func (s *Service) Wait(ctx context.Context, r store.Router, ip string, etags map[string]string, wait time.Duration, withAdded bool) (WaitResult, error) {
+	if len(etags) > 64 {
 		return WaitResult{}, ErrBadReport
 	}
 	for section := range etags {
@@ -287,9 +326,15 @@ func (s *Service) Wait(ctx context.Context, r store.Router, ip string, etags map
 				res.Changed = append(res.Changed, section)
 			}
 		}
-		if len(res.Changed) > 0 || len(res.Gone) > 0 || deadline == nil {
+		for section := range bySection {
+			if _, ok := etags[section]; withAdded && !ok {
+				res.Added = append(res.Added, section)
+			}
+		}
+		if len(res.Changed) > 0 || len(res.Gone) > 0 || len(res.Added) > 0 || deadline == nil {
 			slices.Sort(res.Changed)
 			slices.Sort(res.Gone)
+			slices.Sort(res.Added)
 			return res, nil
 		}
 		select {

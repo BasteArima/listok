@@ -223,3 +223,14 @@ func newClient(e *env) *env {
 func timeNow() time.Time { return time.Now() }
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
+
+func TestCreateListAutoSlug(t *testing.T) {
+	e := newEnv(t, "admin", "long-enough-pass")
+	e.login(t, "admin", "long-enough-pass")
+	if strings.Contains(body(t, e.get(t, "/lists")), `name="slug"`) {
+		t.Fatal("в форме нового списка не должно быть поля адреса")
+	}
+	expectRedirect(t, e.post(t, "/lists", url.Values{"title": {"Общий список"}}), "/lists/obshchii-spisok")
+	expectRedirect(t, e.post(t, "/lists", url.Values{"title": {"Общий список"}}), "/lists/obshchii-spisok-2")
+	expectRedirect(t, e.post(t, "/lists", url.Values{"title": {"!!!"}}), "/lists/list")
+}

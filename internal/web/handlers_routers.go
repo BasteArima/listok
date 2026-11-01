@@ -3,6 +3,7 @@ package web
 import (
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -94,13 +95,25 @@ type feedView struct {
 }
 
 type routerData struct {
-	Router store.Router
-	Feeds  []feedView
-	Lists  []store.List // видимые владельцу роутера: из них собираются фиды
-	// Install — только что выданная ссылка установки агента (показывается один раз).
+	Router   store.Router
+	Feeds    []feedView    // подключённые секции: ссылки без агента и журнал опросов
+	Sections []sectionView // карточки секций
+	// Install — действующая ссылка установки агента: команда видна всегда (D-039).
 	Install *installView
 	// AgentVersion — актуальная версия агента на сервере: с ней сравнивается установленная.
 	AgentVersion string
+	// AgentOnline — агент выходил на связь недавно (agentOnline).
+	AgentOnline bool
+	// SectionsKnown — агент прислал секции forkop (0.4.0+).
+	SectionsKnown bool
+	// Fetches — журнал опросов всех секций, сначала новые.
+	Fetches []fetchRow
+}
+
+type fetchRow struct {
+	Section string
+	store.FeedFetch
+	Fresh bool // забрал версию, актуальную сейчас
 }
 
 func (s *Server) routerFromPath(w http.ResponseWriter, r *http.Request) (store.Router, bool) {
@@ -132,23 +145,30 @@ func (s *Server) renderRouter(w http.ResponseWriter, r *http.Request, rt store.R
 		s.serverError(w, err)
 		return
 	}
-	owner, err := s.Store.UserByID(ctx, rt.OwnerID)
+	ls, err := s.ownerLists(ctx, rt)
 	if err != nil {
 		s.serverError(w, err)
 		return
 	}
-	ls, err := s.Lists.Visible(ctx, owner)
-	if err != nil {
-		s.serverError(w, err)
-		return
-	}
-	d := routerData{Router: rt, Lists: ls, Install: install, AgentVersion: agent.Version}
-	for _, f := range feeds {
-		set := map[int64]bool{}
-		for _, id := range f.ListIDs {
-			set[id] = true
+	if install == nil {
+		token, expires, err := s.Routers.InstallLink(ctx, *userFrom(ctx), rt)
+		if err != nil {
+			s.serverError(w, err)
+			return
 		}
-		d.Feeds = append(d.Feeds, feedView{FeedState: f, URL: s.feedURL(f.Token), ListSet: set})
+		install = s.newInstallView(token, expires, "", routers.AgentMode{Mode: routers.ModeWait})
+	}
+	d := routerData{Router: rt, Install: install, AgentVersion: agent.Version, Sections: s.sections(rt, feeds, ls),
+		AgentOnline: rt.LastSeenAt != nil && time.Since(*rt.LastSeenAt) < agentOnline, SectionsKnown: rt.ForkopSections != nil}
+	for _, f := range feeds {
+		d.Feeds = append(d.Feeds, feedView{FeedState: f, URL: s.feedURL(f.Token)})
+		for _, x := range f.Fetches {
+			d.Fetches = append(d.Fetches, fetchRow{Section: f.Section, FeedFetch: x, Fresh: x.ETag == f.Current.ETag})
+		}
+	}
+	slices.SortFunc(d.Fetches, func(a, b fetchRow) int { return b.At.Compare(a.At) })
+	if len(d.Fetches) > 30 {
+		d.Fetches = d.Fetches[:30]
 	}
 	s.render(w, r, status, "router", page{Title: rt.Name, Error: msg, Form: form, Data: d})
 }

@@ -3,16 +3,19 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 )
 
-// Агент на роутере: ссылка установки, токен агента, отчёты. Токены хранятся только как sha256 (D-006).
+// Агент на роутере: ссылка установки, токен агента, отчёты. Токен агента хранится только как sha256
+// (D-006), ссылка установки — ещё и открыто, чтобы показывать готовую команду (D-039).
 
-// SetInstallToken выдаёт роутеру одноразовую ссылку установки (хеш токена и срок).
-func (s *Store) SetInstallToken(ctx context.Context, routerID int64, hash string, expires time.Time) error {
+// SetInstallToken выдаёт роутеру одноразовую ссылку установки (токен, его хеш и срок).
+func (s *Store) SetInstallToken(ctx context.Context, routerID int64, token, hash string, expires time.Time) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE routers SET install_token_hash = ?, install_expires_at = ? WHERE id = ?`, hash, unix(expires), routerID)
+		`UPDATE routers SET install_token = ?, install_token_hash = ?, install_expires_at = ? WHERE id = ?`,
+		token, hash, unix(expires), routerID)
 	return err
 }
 
@@ -27,7 +30,7 @@ func (s *Store) RouterByInstallToken(ctx context.Context, hash string, now time.
 func (s *Store) ConsumeInstallToken(ctx context.Context, installHash, agentHash string, now time.Time) (int64, error) {
 	var id int64
 	err := s.db.QueryRowContext(ctx, `
-		UPDATE routers SET agent_token_hash = ?, install_token_hash = NULL, install_expires_at = NULL
+		UPDATE routers SET agent_token_hash = ?, install_token = NULL, install_token_hash = NULL, install_expires_at = NULL
 		WHERE install_token_hash = ? AND install_expires_at > ?
 		RETURNING id`, agentHash, installHash, unix(now)).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -67,6 +70,16 @@ func (s *Store) TouchAgent(ctx context.Context, routerID int64, now time.Time, i
 		       agent_interval_s = coalesce(nullif(?, 0), agent_interval_s)
 		WHERE id = ?`,
 		unix(now), nullStr(ip), info.AgentVersion, info.ForkopVersion, info.SingboxVersion, info.Mode, info.IntervalS, routerID)
+	return err
+}
+
+// SetForkopSections запоминает секции forkop, которые агент нашёл на роутере.
+func (s *Store) SetForkopSections(ctx context.Context, routerID int64, sections []ForkopSection) error {
+	b, err := json.Marshal(sections)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE routers SET forkop_sections = ? WHERE id = ?`, string(b), routerID)
 	return err
 }
 

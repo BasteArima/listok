@@ -29,10 +29,7 @@
     <label>Название
       <input name="title" required maxlength="80" value="{{$.Form.title}}" placeholder="Общий">
     </label>
-    <label>Адрес <span class="muted small">(для ссылок: латиница, цифры, дефис)</span>
-      <input name="slug" required maxlength="40" pattern="[a-z0-9][a-z0-9\-]*" value="{{$.Form.slug}}" placeholder="common" autocapitalize="none" spellcheck="false">
-    </label>
-    <label class="wide">Описание
+    <label>Описание
       <input name="description" maxlength="200" value="{{$.Form.description}}" placeholder="необязательно">
     </label>
     <div><button class="primary" type="submit">Создать</button></div>

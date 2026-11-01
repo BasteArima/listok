@@ -27,6 +27,8 @@ var (
 
 var slugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,39}$`)
 
+const maxSlug = 40
+
 const maxComment = 200 // символов
 
 type Service struct {
@@ -105,19 +107,32 @@ func (s *Service) Get(ctx context.Context, u store.User, slug string) (store.Lis
 	return l, err
 }
 
+// Create создаёт список. Пустой slug — адрес из названия (slugify), при совпадении с занятым
+// добавляется -2, -3…; заданный явно (API, тесты) проверяется и должен быть свободен.
 func (s *Service) Create(ctx context.Context, u store.User, slug, title, description string) (store.List, error) {
 	slug = strings.TrimSpace(slug)
 	title = strings.TrimSpace(title)
-	if !slugRe.MatchString(slug) {
-		return store.List{}, ErrBadSlug
-	}
 	if n := utf8.RuneCountInString(title); n < 1 || n > 80 {
 		return store.List{}, ErrBadTitle
 	}
-	if _, err := s.st.CreateList(ctx, slug, title, strings.TrimSpace(description), u.ID, s.now()); err != nil {
-		return store.List{}, err
+	auto := slug == ""
+	if auto {
+		slug = slugify(title)
+	} else if !slugRe.MatchString(slug) {
+		return store.List{}, ErrBadSlug
 	}
-	return s.Get(ctx, u, slug)
+	base := slug
+	for n := 2; ; n++ {
+		_, err := s.st.CreateList(ctx, slug, title, strings.TrimSpace(description), u.ID, s.now())
+		if auto && errors.Is(err, store.ErrSlugTaken) && n < 1000 {
+			slug = withSuffix(base, n)
+			continue
+		}
+		if err != nil {
+			return store.List{}, err
+		}
+		return s.Get(ctx, u, slug)
+	}
 }
 
 func (s *Service) Entries(ctx context.Context, l store.List, f store.EntryFilter) ([]store.Entry, error) {

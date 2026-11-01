@@ -1,0 +1,62 @@
+{{/* Карточка секции forkop на странице роутера (handlers_sections.go). Подключённая — списки-переключатели,
+     каждый щелчок сохраняется и применяется сразу; пока изменение доходит до роутера, карточка переспрашивает себя. */}}
+{{define "section-card"}}
+{{if .Feed}}
+<section class="card section-card" id="section-{{.Feed.ID}}"
+  {{if .Pending}}hx-get="/routers/{{.RouterID}}/sections/{{.Feed.ID}}" hx-trigger="load delay:2s" hx-swap="outerHTML"{{end}}>
+  <div class="section-head">
+    <div class="section-name">
+      <h3 class="mono">{{.Name}}</h3>
+      {{with .Action}}<span class="tag">{{actionLabel .}}</span>{{end}}
+    </div>
+    <div class="section-status small">
+      {{if eq .State "applied"}}<span class="dot ok-dot"></span><span class="plus">Применено</span>
+      {{else if eq .State "applying"}}<span class="dot warn-dot"></span><span class="warn">Применяется…</span>
+      {{else if eq .State "attaching"}}<span class="dot warn-dot"></span><span class="warn">Подключается: агент подключит секцию к forkop (один перезапуск)</span>
+      {{else if eq .State "error"}}<span class="dot bad-dot"></span><span class="err-text">Ошибка на роутере</span>
+      {{else if eq .State "off"}}<span class="dot"></span><span class="muted">Выключена</span>
+      {{else if eq .State "fresh"}}<span class="dot ok-dot"></span><span class="plus">Роутер забрал актуальную версию</span>
+      {{else if eq .State "stale"}}<span class="dot warn-dot"></span><span class="warn">Роутер забрал устаревшую версию</span>
+      {{else}}<span class="dot"></span><span class="muted">Роутер ещё не забирал</span>{{end}}
+      <span class="muted">· {{.Feed.Current.Entries}} {{plural .Feed.Current.Entries "запись" "записи" "записей"}}{{if .HasAgent}}{{with .Feed.AppliedAt}} · {{ago .}}{{end}}{{else}}{{with .Feed.LastFetchAt}} · {{ago .}}{{end}}{{end}}</span>
+    </div>
+  </div>
+  {{if eq .State "error"}}<p class="alert small">{{.Feed.AppliedError}}</p>{{end}}
+  {{if .Missing}}<p class="warn small">В forkop на роутере нет секции с таким названием — проверьте название в LuCI или отключите её здесь.</p>{{end}}
+  {{if .Lists}}
+  <form class="chips" hx-post="/feeds/{{.Feed.ID}}/lists" hx-trigger="change" hx-target="#section-{{.Feed.ID}}" hx-swap="outerHTML">
+    {{range .Lists}}<label class="chip"><input type="checkbox" name="list" value="{{.ID}}"{{if .On}} checked{{end}}> {{.Title}} <span class="muted">{{.Count}}</span></label>{{end}}
+  </form>
+  {{else}}<p class="muted small">Списков пока нет — создайте их в разделе <a href="/lists">Списки</a>.</p>{{end}}
+  <div class="section-foot">
+    {{if eq .State "off"}}
+    <form method="post" action="/feeds/{{.Feed.ID}}/toggle"><input type="hidden" name="enabled" value="1"><button class="link small" type="submit">Включить</button></form>
+    {{end}}
+    <form method="post" action="/feeds/{{.Feed.ID}}/delete" hx-post="/feeds/{{.Feed.ID}}/delete"
+      hx-confirm="Отключить секцию {{.Name}} от listok? Записи listok сразу уйдут с роутера{{if .HasAgent}}, перезапуска не будет{{end}}.">
+      <button class="link small muted" type="submit">Отключить от listok</button>
+    </form>
+  </div>
+</section>
+{{else}}
+<section class="card section-card section-off">
+  <div class="section-head">
+    <div>
+      <div class="section-name">
+        <h3 class="mono">{{.Name}}</h3>
+        {{with .Action}}<span class="tag">{{actionLabel .}}</span>{{end}}
+      </div>
+      {{if .Valid}}<p class="muted small">Не подключена к listok. Подключение один раз перезапустит forkop — дальше списки меняются без перезапусков.</p>
+      {{else}}<p class="muted small">Название не подходит для listok: только латиница, цифры и «_», до 32 символов. Переименуйте секцию в LuCI forkop.</p>{{end}}
+    </div>
+    {{if .Valid}}
+    <form method="post" action="/routers/{{.RouterID}}/feeds" hx-post="/routers/{{.RouterID}}/feeds"
+      hx-confirm="Подключить секцию {{.Name}}? Агент один раз перезапустит forkop (связь через туннель прервётся на несколько секунд).">
+      <input type="hidden" name="section" value="{{.Name}}">
+      <button class="small-btn" type="submit">Подключить секцию</button>
+    </form>
+    {{end}}
+  </div>
+</section>
+{{end}}
+{{end}}

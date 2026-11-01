@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -29,8 +30,20 @@ type Router struct {
 	LastSeenAt       *time.Time // последний запрос агента к /agent/v1
 	LastIP           string
 	InstallExpiresAt *time.Time // ссылка установки ждёт использования до этого момента
+	InstallToken     string     // её токен (D-039); пусто — ссылки нет
 	AgentMode        string     // wait — long-poll, poll — проверка раз в AgentIntervalS (из hello)
 	AgentIntervalS   int
+	// ForkopSections — секции forkop на роутере из hello агента 0.4.0+; nil — агент их не присылал.
+	ForkopSections []ForkopSection
+}
+
+// ForkopSection — секция forkop: название из LuCI (label, в 1.x — имя секции), имя секции в UCI
+// и тип (action). Секция, подключённая по UCI-имени (до forkop 2: geo с названием geoblock), —
+// та же секция.
+type ForkopSection struct {
+	Name   string `json:"name"`
+	UCI    string `json:"uci,omitempty"`
+	Action string `json:"action"`
 }
 
 const routerSelect = `
@@ -40,18 +53,24 @@ const routerSelect = `
 	       r.agent_token_hash IS NOT NULL, coalesce(r.agent_version, ''), coalesce(r.forkop_version, ''),
 	       coalesce(r.singbox_version, ''), r.last_seen_at, coalesce(r.last_ip, ''),
 	       CASE WHEN r.install_token_hash IS NOT NULL THEN r.install_expires_at END,
-	       coalesce(r.agent_mode, ''), coalesce(r.agent_interval_s, 0)
+	       coalesce(r.agent_mode, ''), coalesce(r.agent_interval_s, 0), r.forkop_sections,
+	       CASE WHEN r.install_token_hash IS NOT NULL THEN coalesce(r.install_token, '') ELSE '' END
 	FROM routers r JOIN users u ON u.id = r.owner_id`
 
 func scanRouter(row interface{ Scan(...any) error }) (Router, error) {
 	var r Router
 	var created int64
 	var last, seen, install sql.NullInt64
+	var sections sql.NullString
 	err := row.Scan(&r.ID, &r.Name, &r.OwnerID, &r.OwnerName, &r.Notes, &created, &last, &r.FeedCount,
 		&r.HasAgent, &r.AgentVersion, &r.ForkopVersion, &r.SingboxVersion, &seen, &r.LastIP, &install,
-		&r.AgentMode, &r.AgentIntervalS)
+		&r.AgentMode, &r.AgentIntervalS, &sections, &r.InstallToken)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Router{}, ErrNotFound
+	}
+	if sections.Valid {
+		r.ForkopSections = []ForkopSection{}
+		json.Unmarshal([]byte(sections.String), &r.ForkopSections)
 	}
 	r.CreatedAt = fromUnix(created)
 	r.LastFetchAt = fromNullUnix(last)

@@ -27,25 +27,20 @@
   {{end}}
 </section>
 
-{{if or .CanEdit .List.EnabledCount}}
-<section class="card">
-  <details class="edit"{{if and .CanEdit (not .List.EntryCount)}} open{{end}}>
-    <summary>Импорт и экспорт</summary>
-    <p class="muted small">Файл — обычный текст: запись на строку, комментарий после «&nbsp;#&nbsp;». Им можно поделиться с другим listok. Выключенные записи в файл не попадают.</p>
-    {{if .List.EnabledCount}}
-    <p><a class="small-btn" href="/lists/{{.List.Slug}}/export" download>Скачать {{.List.Slug}}.txt</a></p>
-    {{end}}
+<section class="card file-card">
+  <div class="file-row">
+    <b>Файл списка</b>
+    <a class="small-btn" href="/lists/{{.List.Slug}}/export" download>Скачать .txt</a>
     {{if .CanEdit}}
     <form class="import-form" hx-post="/lists/{{.List.Slug}}/import" hx-encoding="multipart/form-data" hx-target="#import-result">
-      <input type="file" name="file" accept=".txt,.lst,text/plain" required>
+      <input type="file" name="file" accept=".txt,.lst,text/plain" required aria-label="Файл для импорта">
       <button class="small-btn" type="submit">Импортировать</button>
-      <span class="muted small">записи добавятся к списку одной версией, её можно откатить</span>
     </form>
-    <div id="import-result"></div>
     {{end}}
-  </details>
+  </div>
+  <p class="muted small">Обычный текст: запись на строку, комментарий после «&nbsp;#&nbsp;» — так списком можно поделиться с другим listok. В файл попадают включённые записи{{if .CanEdit}}; импорт добавляет записи одной версией, её можно откатить{{end}}.</p>
+  {{if .CanEdit}}<div id="import-result"></div>{{end}}
 </section>
-{{end}}
 
 <section class="card">
   <form id="filters" class="filters" hx-get="/lists/{{.List.Slug}}/rows" hx-trigger="input delay:250ms, change, search" hx-target="#rows" hx-swap="outerHTML">

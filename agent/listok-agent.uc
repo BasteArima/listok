@@ -8,6 +8,10 @@
 //   listok-agent status             что настроено и что лежит на роутере
 //   listok-agent uninstall          убрать агент и его файлы из forkop
 //
+// Секции подключают и отключают в интерфейсе listok (D-038): агент присылает в hello секции forkop,
+// новую подключённую секцию скачивает и подключает к forkop сам (один перезапуск forkop), а у
+// отключённой оставляет в файле только сторожевую запись — без перезапуска.
+//
 // forkop 1.x: файл секции стоит в domain_ip_lists, применение — forkop list_update.
 // forkop 2.x: файл — локальный rule set ядра (rule_set_with_subnets), ядро само перечитывает
 // его при изменении, а подсети в nft переносит служба forkop. Описание: docs/forkop-integration.md.
@@ -23,7 +27,7 @@
 import * as fs from 'fs';
 import { cursor } from 'uci';
 
-const VERSION = '0.3.1';
+const VERSION = '0.4.0';
 const UCI_DIR = getenv('LISTOK_UCI_DIR') || '/etc/config';
 const STATE_DIR = getenv('LISTOK_STATE_DIR') || '/etc/listok';
 const TMP_DIR = getenv('LISTOK_TMP_DIR') || '/tmp/listok';
@@ -91,7 +95,9 @@ function config() {
 		mode: mode == 'poll' ? 'poll' : 'wait',
 		interval: max(int(c.get('listok', 'agent', 'interval') || POLL_DEFAULT_S) || POLL_DEFAULT_S, 60),
 		feeds: {},
-		uci_names: {}
+		uci_names: {},
+		server_feeds: {}, // секция → токен по последнему hello
+		skip: {}          // секция → до какого времени не пробовать подключать снова
 	};
 	c.foreach('listok', 'feed', function(s) {
 		if (s.section && s.token) {
@@ -237,6 +243,16 @@ function forkop_section(c, name) {
 	if (found == null && c.get('forkop', name) == 'section')
 		found = name;
 	return found;
+}
+
+// forkop_sections — секции forkop для hello: название (label, в 1.x — имя секции), UCI-имя и тип.
+// По UCI-имени сервер узнаёт секцию, подключённую до forkop 2 (geo с названием geoblock).
+function forkop_sections() {
+	let out = [];
+	cursor(UCI_DIR).foreach('forkop', 'section', function(s) {
+		push(out, { name: s.label || s['.name'], uci: s['.name'], action: s.action || '' });
+	});
+	return out;
 }
 
 // list_key — опция секции, откуда forkop берёт локальный файл со списком.
@@ -411,7 +427,8 @@ function hello(cfg) {
 		singbox_version: installed_version('sing-box'),
 		mode: cfg.mode,
 		interval_s: cfg.mode == 'poll' ? cfg.interval : 0,
-		sections: keys(cfg.feeds)
+		sections: keys(cfg.feeds),
+		forkop_sections: forkop_sections()
 	});
 	if (r.code == 401)
 		log('err', 'hello: токен агента не принят (агент отвязан на сервере?) — переустановите агент');
@@ -421,11 +438,12 @@ function hello(cfg) {
 	}
 	let resp = json(r.body);
 	let c = null;
+	cfg.server_feeds = {};
 	for (let f in resp?.feeds || []) {
-		if (!cfg.feeds[f.section]) {
-			log('warning', 'на сервере есть фид секции ' + f.section + ', которой нет в /etc/config/listok — переустановите агент');
-			continue;
-		}
+		if (f.section && f.token)
+			cfg.server_feeds[f.section] = f.token;
+		if (!cfg.feeds[f.section])
+			continue; // новую секцию подключает add_sections
 		if (f.token && f.token != cfg.feeds[f.section]) {
 			c = c || cursor(UCI_DIR);
 			c.set('listok', cfg.uci_names[f.section], 'token', f.token);
@@ -536,13 +554,121 @@ function report_state(cfg) {
 		report(cfg, s, etag_of(s), state ? state[s] : { ok: true });
 }
 
+// attach — подключить файлы секций к forkop: путь /etc/listok/<секция>.lst ровно в одной опции
+// секции (в LuCI forkop 2 набор лежит либо в rule_set, либо в rule_set_with_subnets, и путь,
+// добавленный руками без флажка подсетей, иначе оказался бы в обеих), ссылки на фиды этого
+// сервера убираются. Если настройки изменились — перезапуск forkop. say — куда писать сообщения.
+// Возвращает {changed, missing: секции, которых нет в forkop}.
+function attach(cfg, sections, say) {
+	let c = cursor(UCI_DIR), major = forkop_major(), changed = false, missing = [];
+	for (let name in sections) {
+		let sec = forkop_section(c, name);
+		if (!sec) {
+			push(missing, name);
+			continue;
+		}
+		let target = list_key(c, sec, major), path = list_path(name);
+		for (let key in LIST_KEYS) {
+			let cur = as_list(c.get('forkop', sec, key));
+			let want = filter(cur, function(v) {
+				if (index(v, cfg.server + '/f/') == 0) {
+					say('секция ' + name + ': ссылка на фид заменена локальным файлом');
+					return false;
+				}
+				return v != path;
+			});
+			if (key == target)
+				push(want, path);
+			if (join('\n', cur) == join('\n', want))
+				continue;
+			if (length(want))
+				c.set('forkop', sec, key, want);
+			else
+				c.delete('forkop', sec, key);
+			changed = true;
+		}
+	}
+	if (changed) {
+		c.commit('forkop');
+		say('перезапуск forkop: подключаю списки listok (дальше они обновляются без перезапуска sing-box)');
+		if (!DRY_RUN)
+			system([ '/etc/init.d/forkop', 'reload' ]);
+	}
+	return { changed: changed, missing: missing };
+}
+
+// add_sections — подключить секции, которые включили в интерфейсе (D-038): скачать фид, записать
+// секцию в /etc/config/listok, подключить файл к forkop (один перезапуск forkop) и доложить.
+// Не вышло — секция пропускается на время (cfg.skip), чтобы не дёргать сервер по кругу.
+function add_sections(cfg, sections) {
+	let fc = cursor(UCI_DIR), ready = [];
+	for (let s in sections) {
+		let token = cfg.server_feeds[s];
+		if (!token || cfg.feeds[s])
+			continue;
+		if (!forkop_section(fc, s)) {
+			log('err', 'секцию ' + s + ' подключили в listok, но в forkop её нет');
+			report(cfg, s, 'none', { ok: false, error: 'в forkop нет секции ' + s + ' — проверьте название в LuCI' });
+			cfg.skip[s] = time() + 600;
+			continue;
+		}
+		cfg.feeds[s] = token;
+		let r = fetch(cfg, s);
+		let bad = r.code == 200 ? validate(r.body) : 'сервер ответил ' + r.code;
+		if (bad) {
+			delete cfg.feeds[s];
+			log('warning', 'новая секция ' + s + ': фид не получен (' + bad + '), повтор через минуту');
+			cfg.skip[s] = time() + 60;
+			continue;
+		}
+		store(s, r.body, r.etag);
+		push(ready, s);
+	}
+	if (!length(ready))
+		return;
+	let c = cursor(UCI_DIR);
+	for (let s in ready) {
+		let name = c.add('listok', 'feed');
+		c.set('listok', name, 'section', s);
+		c.set('listok', name, 'token', cfg.feeds[s]);
+		cfg.uci_names[s] = name;
+	}
+	c.commit('listok');
+	log('info', 'подключаю секции ' + join(', ', ready));
+	attach(cfg, ready, (m) => log('info', m));
+	let state = DRY_RUN ? null : loaded(ready);
+	for (let s in ready)
+		report(cfg, s, etag_of(s), state ? state[s] : { ok: true });
+}
+
+// drop_sections — секции отключили в интерфейсе (или выключили фид): в файле остаётся только
+// сторожевая запись, и записи listok уходят с роутера сразу, без перезапуска forkop. Путь к файлу
+// в forkop остаётся: при повторном подключении перезапуск не понадобится.
+function drop_sections(cfg, sections) {
+	let dropped = filter(sections, (s) => cfg.feeds[s]);
+	if (!length(dropped))
+		return;
+	let before = !DRY_RUN && forkop_major() >= 2 ? probe(dropped) : null;
+	let c = cursor(UCI_DIR);
+	for (let s in dropped) {
+		fs.writefile(list_path(s) + '.new', SENTINEL + '\n');
+		fs.rename(list_path(s) + '.new', list_path(s));
+		fs.unlink(STATE_DIR + '/' + s + '.etag');
+		c.delete('listok', cfg.uci_names[s]);
+		delete cfg.feeds[s];
+		delete cfg.uci_names[s];
+	}
+	c.commit('listok');
+	let res = apply(dropped, before);
+	for (let s in dropped)
+		log(res[s].ok ? 'info' : 'err', res[s].ok ? 'секция ' + s + ' отключена в listok, записи убраны' : res[s].error);
+}
+
 function cmd_run() {
 	let cfg = config();
-	if (!length(keys(cfg.feeds)))
-		die('в /etc/config/listok нет ни одного фида');
 	pin_ca(cfg);
 	let backoff = 5, next_hello = 0, reported = false;
-	log('info', 'агент ' + VERSION + ' запущен: секции ' + join(', ', sort(keys(cfg.feeds))) +
+	log('info', 'агент ' + VERSION + ' запущен: секции ' + (join(', ', sort(keys(cfg.feeds))) || 'пока не подключены') +
 		(cfg.mode == 'poll' ? ', проверка раз в ' + cfg.interval + ' с' : ', мгновенный режим') +
 		(cfg.ca ? ', корень ' + cfg.ca : ''));
 	while (true) {
@@ -553,13 +679,19 @@ function cmd_run() {
 				report_state(cfg);
 				reported = true;
 			}
+			// Секции, подключённые, пока агент был выключен.
+			if (code == 200)
+				add_sections(cfg, filter(keys(cfg.server_feeds), (s) => !cfg.feeds[s] && !(cfg.skip[s] > time())));
 		}
 		let etags = {};
 		for (let s in keys(cfg.feeds))
 			etags[s] = etag_of(s);
 		let wait = cfg.mode == 'poll' ? 0 : WAIT_S;
 		let t0 = time();
-		let r = post(cfg, '/agent/v1/wait', { feeds: etags, wait: wait }, wait + 25);
+		// Пока какую-то новую секцию подключить не вышло, о новых не спрашиваем: иначе сервер
+		// отвечал бы сразу, раз за разом.
+		let skipping = length(filter(keys(cfg.skip), (s) => cfg.skip[s] > time())) > 0;
+		let r = post(cfg, '/agent/v1/wait', { feeds: etags, wait: wait, added: !skipping }, wait + 25);
 		let resp = r.code == 200 ? json(r.body) : null;
 		if (!resp) {
 			if (r.code == 401) {
@@ -575,9 +707,13 @@ function cmd_run() {
 			continue;
 		}
 		if (length(resp.gone || [])) {
-			log('warning', 'фиды секций ' + join(', ', resp.gone) + ' недоступны (удалены, выключены или перевыпущены) — спрашиваю сервер');
-			if (hello(cfg) == 200)
-				next_hello = time() + 3600;
+			log('info', 'секции ' + join(', ', resp.gone) + ' отключены в listok');
+			drop_sections(cfg, resp.gone);
+		}
+		let added = filter(resp.added || [], (s) => !cfg.feeds[s] && !(cfg.skip[s] > time()));
+		if (length(added) && hello(cfg) == 200) {
+			next_hello = time() + 3600;
+			add_sections(cfg, added);
 		}
 		if (length(resp.changed || []) && !sync_changed(cfg, resp.changed)) {
 			sleep(backoff * 1000);
@@ -587,9 +723,7 @@ function cmd_run() {
 		backoff = 5;
 		if (cfg.mode == 'poll')
 			sleep(cfg.interval * 1000);
-		else if (length(resp.gone || []))
-			sleep(BACKOFF_MAX_S * 1000); // фид пропал: не долбить сервер, пока его не вернут
-		else if (time() - t0 < 5 && !length(resp.changed || []))
+		else if (time() - t0 < 5 && !length(resp.changed || []) && !length(resp.gone || []) && !length(added))
 			sleep(30000); // сервер не держит long-poll: не долбить его
 	}
 }
@@ -623,41 +757,11 @@ function cmd_check(sections) {
 // (если их вставляли вручную) убираются. Если настройки изменились — единственный перезапуск forkop;
 // при переустановке с теми же секциями forkop не трогается.
 function cmd_attach(sections) {
-	let cfg = config();
-	let c = cursor(UCI_DIR), major = forkop_major(), changed = false;
-	for (let name in sections) {
-		let sec = forkop_section(c, name);
-		if (!sec)
-			die('в forkop нет секции ' + name);
-		let target = list_key(c, sec, major), path = list_path(name);
-		for (let key in LIST_KEYS) {
-			let cur = as_list(c.get('forkop', sec, key));
-			let want = filter(cur, function(v) {
-				if (index(v, cfg.server + '/f/') == 0) {
-					print('listok: секция ' + name + ': ссылка на фид заменена локальным файлом\n');
-					return false;
-				}
-				return v != path;
-			});
-			if (key == target)
-				push(want, path);
-			if (join('\n', cur) == join('\n', want))
-				continue;
-			if (length(want))
-				c.set('forkop', sec, key, want);
-			else
-				c.delete('forkop', sec, key);
-			changed = true;
-		}
-	}
-	if (!changed) {
+	let res = attach(config(), sections, (m) => print('listok: ' + m + '\n'));
+	if (length(res.missing))
+		die('в forkop нет секции ' + join(', ', res.missing));
+	if (!res.changed)
 		print('listok: настройки forkop уже верные, перезапуск не нужен\n');
-		return;
-	}
-	c.commit('forkop');
-	print('listok: перезапуск forkop (единственный: дальше списки обновляются без перезапуска sing-box)\n');
-	if (!DRY_RUN)
-		system([ '/etc/init.d/forkop', 'reload' ]);
 }
 
 function cmd_status() {
