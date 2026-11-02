@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/BasteArima/listok/internal/store"
+	"github.com/BasteArima/listok/shortcut"
 )
 
 var newTokenRe = regexp.MustCompile(`id="new-token"|value="([A-Za-z0-9_-]{43})"`)
@@ -117,7 +118,7 @@ func TestAPI(t *testing.T) {
 	if r.Header.Get("Access-Control-Allow-Origin") != "*" {
 		t.Fatal("нет заголовка CORS")
 	}
-	mustContain(t, b, `"user":"admin"`, `"slug":"common"`, `"title":"Общий"`, `"can_edit":true`)
+	mustContain(t, b, `"user":"admin"`, `"slug":"common"`, `"title":"Общий"`, `"can_edit":true`, `"menu":{"Общий":"common"}`)
 
 	// Проверка ничего не меняет: хост сокращается до домена, «только этот хост» оставляет как есть.
 	_, b = apiDo(t, e, "GET", "/api/v1/check?q="+url.QueryEscape("https://www.youtube.com/watch?v=1"), token, "")
@@ -126,6 +127,16 @@ func TestAPI(t *testing.T) {
 	mustContain(t, b, `"value":"www.youtube.com"`)
 	_, b = apiDo(t, e, "GET", "/api/v1/check?q=192.168.1.1", token, "")
 	mustContain(t, b, "частный или служебный диапазон")
+
+	// Несколько хостов одного домена — не повтор: расширение сводит хосты страницы к доменам.
+	_, b = apiDo(t, e, "GET", "/api/v1/check?q="+url.QueryEscape("a.cdn.example b.cdn.example localhost"), token, "")
+	var checked struct {
+		Items []apiItem `json:"items"`
+	}
+	json.Unmarshal([]byte(b), &checked)
+	if len(checked.Items) != 3 || checked.Items[0].Value != "cdn.example" || checked.Items[1].Value != "cdn.example" || checked.Items[2].Error == "" {
+		t.Fatalf("несколько хостов: %s", b)
+	}
 
 	// Добавление: межсайтовый запрос проходит, источник — api, адрес можно прислать целой ссылкой.
 	add := func(payload string) (int, map[string]any) {
@@ -155,6 +166,9 @@ func TestAPI(t *testing.T) {
 	}
 	if _, v = add(`{"input":"com"}`); !strings.HasPrefix(v["message"].(string), "com: ") {
 		t.Fatalf("ошибка разбора: %v", v)
+	}
+	if _, v = add(`{"input":"one.example\ntwo.example\nyoutube.com"}`); v["message"] != "«Общий». Добавлено: 2, уже было: 1" {
+		t.Fatalf("несколько записей: %v", v)
 	}
 	if _, b = apiDo(t, e, "GET", "/api/v1/check?q=youtube.com", token, ""); !strings.Contains(b, `"list":"Общий"`) {
 		t.Fatalf("покрытие в проверке: %s", b)
@@ -205,7 +219,7 @@ func TestAPIPermissions(t *testing.T) {
 	}
 
 	_, b := apiDo(t, e, "GET", "/api/v1/lists", token, "")
-	mustContain(t, b, `"user":"guest"`, `"slug":"view"`, `"can_edit":false`)
+	mustContain(t, b, `"user":"guest"`, `"slug":"view"`, `"can_edit":false`, `"menu":{}`)
 	if strings.Contains(b, "hidden") {
 		t.Fatalf("виден чужой список: %s", b)
 	}
@@ -229,6 +243,22 @@ func TestAPIPermissions(t *testing.T) {
 	}
 	if r, _ := apiDo(t, e, "GET", "/api/v1/lists", token, ""); r.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("отключённый пользователь: %d", r.StatusCode)
+	}
+}
+
+func TestShortcutFile(t *testing.T) {
+	e := newEnv(t, "admin", "long-enough-pass")
+	e.login(t, "admin", "long-enough-pass")
+	page := body(t, e.get(t, "/connections"))
+	mustContain(t, page, "Собрать вручную")
+	r := e.get(t, "/shortcut/listok.shortcut")
+	if _, signed := shortcut.Signed(); signed {
+		mustContain(t, page, `href="/shortcut/listok.shortcut"`)
+		if r.StatusCode != http.StatusOK || !strings.Contains(r.Header.Get("Content-Disposition"), "listok.shortcut") {
+			t.Fatalf("команда: %d %v", r.StatusCode, r.Header)
+		}
+	} else if r.StatusCode != http.StatusNotFound || strings.Contains(page, `href="/shortcut/listok.shortcut"`) {
+		t.Fatalf("неподписанную команду нельзя предлагать: %d", r.StatusCode)
 	}
 }
 

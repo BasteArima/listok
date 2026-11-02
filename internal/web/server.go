@@ -103,6 +103,7 @@ func New(d Deps) (*Server, error) {
 	authed("POST /connections", s.createConnection)
 	authed("POST /connections/{id}/revoke", s.revokeConnection)
 	authed("GET /extension.zip", s.extensionZip)
+	authed("GET /shortcut/listok.shortcut", s.shortcutFile)
 	authed("GET /routers", s.routersPage)
 	authed("POST /routers", s.createRouter)
 	authed("GET /routers/{id}", s.routerPage)

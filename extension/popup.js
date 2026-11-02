@@ -1,7 +1,13 @@
-import { loadSettings, saveSettings, request, encodePath } from "./client.js";
+import { loadSettings, saveSettings, request, inspectHosts, encodePath } from "./client.js";
 
 const $ = (id) => document.getElementById(id);
 const CLOSE_AFTER_MS = 1500;
+const MAX_OTHER = 40;
+
+let settings;
+let tabId;
+let hasLists = false;
+let mainTouched = false; // галочку основного сайта поменяли руками: больше не трогаем её сами
 
 function showResult(text, kind) {
   const el = $("result");
@@ -10,16 +16,28 @@ function showResult(text, kind) {
   el.hidden = false;
 }
 
-// currentHost — хост активной вкладки. На служебных страницах (настройки, новая вкладка) пусто.
-async function currentHost() {
+function plural(n, one, few, many) {
+  const m = n % 100;
+  if (m >= 11 && m <= 14) return many;
+  if (m % 10 === 1) return one;
+  if (m % 10 >= 2 && m % 10 <= 4) return few;
+  return many;
+}
+
+// currentTab — активная вкладка и её хост. На служебных страницах (настройки, новая вкладка) хост пуст.
+async function currentTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  let host = "";
   for (const candidate of [tab && tab.url, tab && tab.pendingUrl]) {
     try {
       const u = new URL(candidate);
-      if (u.protocol === "http:" || u.protocol === "https:") return u.hostname.replace(/^\[|\]$/g, "");
+      if (u.protocol === "http:" || u.protocol === "https:") {
+        host = u.hostname.replace(/^\[|\]$/g, "");
+        break;
+      }
     } catch (_) {}
   }
-  return "";
+  return { id: tab && tab.id, host };
 }
 
 function fillLists(all, wanted) {
@@ -28,13 +46,28 @@ function fillLists(all, wanted) {
   const current = select.value || wanted;
   select.replaceChildren(...editable.map((l) => new Option(l.title, l.slug)));
   if (editable.some((l) => l.slug === current)) select.value = current;
-  $("add").disabled = editable.length === 0;
-  return editable;
+  hasLists = editable.length > 0;
+  updateButton();
+}
+
+function checkedRows() {
+  return [...document.querySelectorAll(".rows input:checked")];
+}
+
+// Кнопка говорит, что будет сделано. Кликнуть впустую нельзя.
+function updateButton() {
+  const main = $("main-on").checked && $("input").value.trim() !== "";
+  const n = checkedRows().length + (main ? 1 : 0);
+  const add = $("add");
+  add.disabled = n === 0 || !hasLists;
+  if (n === 0) add.textContent = $("input").value.trim() ? "Отметьте, что добавить" : "Укажите сайт";
+  else if (n === 1) add.textContent = "Добавить";
+  else add.textContent = `Добавить ${n} ${plural(n, "домен", "домена", "доменов")}`;
 }
 
 // Что получится из ввода и не покрыто ли это уже. Устаревший ответ отбрасывается.
 let previewSeq = 0;
-async function updatePreview(settings) {
+async function updatePreview() {
   const seq = ++previewSeq;
   const preview = $("preview");
   const input = $("input").value.trim();
@@ -52,26 +85,89 @@ async function updatePreview(settings) {
   }
   if (seq !== previewSeq) return;
   const lines = [];
+  let covered = false;
   for (const it of data.items) {
     if (it.error) {
-      lines.push(span(it.error, "err"));
+      lines.push(line(it.error, "err"));
       continue;
     }
-    if (it.value !== input) lines.push(span("Добавится: " + it.value));
+    if (it.value !== input) lines.push(line("Добавится: " + it.value));
     if (it.covered_by) {
+      covered = true;
       const titles = [...new Set(it.covered_by.map((c) => "«" + c.list + "»"))].join(", ");
-      lines.push(span("Уже есть в " + titles, "warn"));
+      lines.push(line("Уже есть в " + titles, "warn"));
     }
-    for (const w of it.warnings || []) lines.push(span(w, "warn"));
+    for (const w of it.warnings || []) lines.push(line(w, "warn"));
   }
   preview.replaceChildren(...lines);
+  if (!mainTouched) {
+    $("main-on").checked = !covered;
+    updateButton();
+  }
 }
 
-function span(text, cls) {
+function line(text, cls) {
   const el = document.createElement("div");
   el.textContent = text;
   if (cls) el.className = cls;
   return el;
+}
+
+function row(group, checked, note) {
+  const label = document.createElement("label");
+  label.className = "row" + (group.coveredBy.length ? " done" : "");
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.checked = checked;
+  box.value = group.value;
+  box.dataset.hosts = group.hosts.join(" ");
+  const name = document.createElement("span");
+  name.className = "name";
+  name.textContent = group.value;
+  label.append(box, name);
+  if (note) {
+    const n = document.createElement("span");
+    n.className = "note";
+    n.textContent = note;
+    label.append(n);
+  }
+  return label;
+}
+
+function failedNote(g) {
+  if (g.coveredBy.length) return "уже в «" + g.coveredBy[0] + "»";
+  if (g.ok > 0) return "часть загрузилась";
+  return `${g.failed} ${plural(g.failed, "запрос", "запроса", "запросов")}`;
+}
+
+// Домены страницы: сверху не загрузившиеся, в свёрнутом блоке остальные. Отмечены только те, что точно не загрузились
+// и ещё не добавлены: тогда значок и Enter делают нужное без лишних щелчков.
+async function loadResources() {
+  if (tabId === undefined) return;
+  const info = await chrome.runtime.sendMessage({ type: "tabInfo", tabId }).catch(() => null);
+  if (!info || info.hosts.length === 0) return;
+  const stats = new Map(info.hosts.map((h) => [h.host, h]));
+  const groups = await inspectHosts(settings, info.hosts.map((h) => h.host));
+  const failed = [];
+  const other = [];
+  for (const g of groups.values()) {
+    if (g.hosts.includes(info.main)) continue; // Это основной сайт, он в поле сверху.
+    g.failed = g.hosts.reduce((sum, h) => sum + stats.get(h).failed, 0);
+    g.ok = g.hosts.reduce((sum, h) => sum + stats.get(h).ok, 0);
+    if (g.failed > 0) failed.push(g);
+    else if (g.coveredBy.length === 0) other.push(g);
+  }
+  failed.sort((a, b) => b.failed - a.failed);
+  other.sort((a, b) => b.ok - a.ok);
+
+  $("failed-rows").replaceChildren(...failed.map((g) => row(g, g.coveredBy.length === 0 && g.ok === 0, failedNote(g))));
+  $("failed-count").textContent = failed.length;
+  $("failed").hidden = failed.length === 0;
+  const shown = other.slice(0, MAX_OTHER);
+  $("other-rows").replaceChildren(...shown.map((g) => row(g, false, "")));
+  $("other-count").textContent = other.length;
+  $("other").hidden = other.length === 0;
+  updateButton();
 }
 
 function debounce(fn, ms) {
@@ -82,18 +178,12 @@ function debounce(fn, ms) {
   };
 }
 
-async function add(settings) {
+async function add() {
   const slug = $("list").value;
-  const input = $("input").value.trim();
-  if (!input) {
-    showResult("Укажите сайт", "err");
-    $("input").focus();
-    return;
-  }
-  if (!slug) {
-    showResult("Нет списка, в который можно добавлять", "err");
-    return;
-  }
+  const main = $("main-on").checked ? $("input").value.trim() : "";
+  const rows = checkedRows();
+  const input = [main, ...rows.map((b) => b.value)].filter(Boolean).join("\n");
+  if (!input || !slug) return;
   $("add").disabled = true;
   $("result").hidden = true;
   try {
@@ -104,16 +194,21 @@ async function add(settings) {
     });
     await saveSettings({ lastList: slug });
     const statuses = data.items.map((i) => i.status);
-    if (statuses.includes("added")) {
+    const failed = statuses.includes("error");
+    if (tabId !== undefined && !failed) {
+      const hosts = rows.flatMap((b) => b.dataset.hosts.split(" "));
+      await chrome.runtime.sendMessage({ type: "forget", tabId, hosts }).catch(() => {});
+    }
+    if (statuses.includes("added") && !failed) {
       showResult(data.message, "ok");
       setTimeout(() => window.close(), CLOSE_AFTER_MS);
       return;
     }
-    showResult(data.message, statuses.includes("error") ? "err" : "warn");
+    showResult(data.message, failed ? "err" : "warn");
   } catch (e) {
     showResult(e.message, "err");
   }
-  $("add").disabled = false;
+  updateButton();
 }
 
 async function main() {
@@ -124,33 +219,47 @@ async function main() {
   $("settings").addEventListener("click", openSettings);
   $("open-settings").addEventListener("click", openSettings);
 
-  const settings = await loadSettings();
+  settings = await loadSettings();
   if (!settings.token || settings.urls.length === 0) {
     $("setup").hidden = false;
     return;
   }
 
-  const host = await currentHost();
-  $("input").value = host;
+  const tab = await currentTab();
+  tabId = tab.id;
+  $("input").value = tab.host;
   $("form").hidden = false;
   // Списки из прошлого раза сразу, свежие — как придут: окошко не ждёт сеть.
   fillLists(settings.lists, settings.lastList);
-  (host ? $("add") : $("input")).focus();
+  (tab.host ? $("add") : $("input")).focus();
 
-  const refresh = debounce(() => updatePreview(settings), 300);
-  $("input").addEventListener("input", refresh);
-  $("exact").addEventListener("change", () => updatePreview(settings));
+  const refresh = debounce(updatePreview, 300);
+  $("input").addEventListener("input", () => {
+    updateButton();
+    refresh();
+  });
+  $("main-on").addEventListener("change", () => {
+    mainTouched = true;
+    updateButton();
+  });
+  $("exact").addEventListener("change", updatePreview);
+  $("form").addEventListener("change", updateButton);
   $("form").addEventListener("submit", (e) => {
     e.preventDefault();
-    add(settings);
+    add();
   });
 
-  updatePreview(settings);
+  const keepFocus = async (task) => {
+    await task;
+    if (document.activeElement === document.body && !$("add").disabled) $("add").focus();
+  };
+  keepFocus(updatePreview());
+  keepFocus(loadResources().catch(() => {}));
   try {
     const data = await request(settings, "/api/v1/lists");
     fillLists(data.lists, settings.lastList);
     await saveSettings({ lists: data.lists });
-    if (!data.lists.some((l) => l.can_edit)) showResult("Нет списка, в который можно добавлять", "warn");
+    if (!hasLists) showResult("Нет списка, в который можно добавлять", "warn");
   } catch (e) {
     showResult(e.status === 401 ? "Токен не подходит: создайте новый и вставьте его в настройках" : e.message, "err");
   }

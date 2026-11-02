@@ -74,6 +74,23 @@ button { font: inherit; cursor: pointer; }
 .preview .warn { color: var(--warn-text); }
 .preview .err { color: var(--danger-text); }
 
+.main-row { display: flex; align-items: center; gap: 8px; }
+.main-row input[type=text] { flex: 1; min-width: 0; }
+.resources { display: grid; gap: 6px; }
+.section {
+  display: flex; justify-content: space-between; padding: 4px 8px; font-size: 12.5px; font-weight: 600;
+  color: var(--warn-text); background: var(--warn-bg); border-radius: var(--radius);
+}
+.rows { display: grid; gap: 4px; }
+.row { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.row .name { font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; }
+.row .note { margin-left: auto; padding-left: 8px; flex: none; font-size: 11.5px; color: var(--muted); }
+.row.done .name { color: var(--muted); }
+details > summary { cursor: pointer; font-size: 12.5px; color: var(--muted); }
+details[open] > summary { margin-bottom: 6px; }
+details .rows { max-height: 150px; overflow-y: auto; }
+.options-box { display: grid; gap: 8px; }
+
 /* Настройки */
 .options { max-width: 560px; margin: 0 auto; padding: 24px 16px; display: grid; gap: 14px; }
 .options h1 { font-size: 20px; margin: 0; }

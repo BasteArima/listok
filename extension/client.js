@@ -84,6 +84,28 @@ export async function request(settings, path, body) {
   throw new ApiError("Нет связи с listok: " + settings.urls.join(", "), 0);
 }
 
+// inspectHosts сводит хосты к доменам, как это сделает сервис при добавлении, и узнаёт, где они уже есть.
+// Возвращает Map: домен → { value, hosts, coveredBy }. Хосты, которые не добавить (адреса, зарезервированные
+// имена, частные сети), отбрасываются.
+export async function inspectHosts(settings, hosts) {
+  const groups = new Map();
+  const CHUNK = 60;
+  for (let i = 0; i < hosts.length; i += CHUNK) {
+    const q = new URLSearchParams({ q: hosts.slice(i, i + CHUNK).join(" ") });
+    const data = await request(settings, "/api/v1/check?" + q);
+    for (const it of data.items) {
+      if (it.error || it.kind !== "domain" || (it.warnings || []).length) continue;
+      let g = groups.get(it.value);
+      if (!g) {
+        g = { value: it.value, hosts: [], coveredBy: [...new Set((it.covered_by || []).map((c) => c.list))] };
+        groups.set(it.value, g);
+      }
+      g.hosts.push(it.input);
+    }
+  }
+  return groups;
+}
+
 export function encodePath(slug) {
   return "/api/v1/lists/" + encodeURIComponent(slug) + "/entries";
 }

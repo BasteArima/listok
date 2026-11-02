@@ -35,6 +35,11 @@ listok/
 ├── extension/                   # расширение браузера (docs/extension.md)
 │   ├── extension.go             # go:embed, Version, архив для /extension.zip
 │   ├── manifest.json, popup.*, options.*, client.js, style.css, icons/
+│   ├── background.js            # какие домены страницы не загрузились
+├── shortcut/                    # команда для iPad (docs/extension.md)
+│   ├── shortcut.go              # описание команды, go:embed подписанного файла
+│   ├── generate/                # go run ./shortcut/generate пишет listok.plist
+│   ├── listok.plist, sign.sh    # исходник и подпись на Mac → listok-signed.shortcut
 ├── .github/workflows/image.yml  # тесты + образ ghcr.io/bastearima/listok на push в main
 └── deploy/
     ├── Dockerfile               # multi-stage, итог: distroless/static-debian12:nonroot; healthcheck = /listok healthcheck

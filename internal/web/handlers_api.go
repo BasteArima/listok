@@ -90,10 +90,19 @@ func (s *Server) apiLists(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := make([]apiList, 0, len(all))
+	menu := map[string]string{}
 	for _, l := range all {
 		out = append(out, apiList{Slug: l.Slug, Title: l.Title, Entries: l.EnabledCount, CanEdit: lists.CanEdit(l)})
+		if !lists.CanEdit(l) {
+			continue
+		}
+		title := l.Title
+		if _, taken := menu[title]; taken {
+			title = fmt.Sprintf("%s (%s)", l.Title, l.Slug)
+		}
+		menu[title] = l.Slug
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"user": u.Username, "lists": out})
+	writeJSON(w, http.StatusOK, map[string]any{"user": u.Username, "lists": out, "menu": menu})
 }
 
 type apiCover struct {
@@ -132,11 +141,12 @@ func apiItems(items []lists.Item) []apiItem {
 	return out
 }
 
-// apiCheck разбирает ввод и показывает покрытие, ничего не меняя.
+// apiCheck разбирает ввод и показывает покрытие, ничего не меняя. Токены независимы: хосты одной страницы
+// могут сводиться к одному домену, и это не повтор.
 func (s *Server) apiCheck(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(r.Context())
 	opt := entry.Options{ExactHost: r.URL.Query().Get("exact") == "1"}
-	items, err := s.Lists.Preview(r.Context(), *u, r.URL.Query().Get("q"), opt, 0)
+	items, err := s.Lists.PreviewEach(r.Context(), *u, entry.Tokens(r.URL.Query().Get("q")), opt)
 	if err != nil {
 		s.apiServerError(w, err)
 		return
@@ -178,7 +188,7 @@ func (s *Server) apiAddEntries(w http.ResponseWriter, r *http.Request) {
 // addMessage — итог одной фразой: его показывают окошко расширения и уведомление команды на iPad.
 func addMessage(items []lists.Item, title string) string {
 	if len(items) > 1 {
-		return summarize(items)
+		return fmt.Sprintf("«%s». %s", title, summarize(items))
 	}
 	it := items[0]
 	switch it.Status {

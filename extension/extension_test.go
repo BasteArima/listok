@@ -26,6 +26,9 @@ func TestManifest(t *testing.T) {
 			Page string `json:"page"`
 		} `json:"options_ui"`
 		HostPermissions []string `json:"host_permissions"`
+		Background      struct {
+			Worker string `json:"service_worker"`
+		} `json:"background"`
 	}
 	if err := json.Unmarshal(b, &m); err != nil {
 		t.Fatal(err)
@@ -46,9 +49,12 @@ func TestManifest(t *testing.T) {
 			t.Errorf("манифест ссылается на %q: %v", p, err)
 		}
 	}
-	// Разрешения минимальные: адрес сервиса пользователь разрешает сам в настройках, вкладки читаем только по нажатию.
-	if strings.Join(m.Permissions, ",") != "activeTab,storage" || len(m.HostPermissions) != 0 {
+	// Запросы только наблюдаем: разрешения на их блокировку и изменение расширению не нужны (D-042).
+	if strings.Join(m.Permissions, ",") != "storage,webRequest" || strings.Join(m.HostPermissions, ",") != "<all_urls>" {
 		t.Fatalf("permissions = %v, host_permissions = %v", m.Permissions, m.HostPermissions)
+	}
+	if _, err := files.ReadFile(m.Background.Worker); err != nil {
+		t.Errorf("фоновый скрипт %q: %v", m.Background.Worker, err)
 	}
 }
 
@@ -96,7 +102,7 @@ func TestZip(t *testing.T) {
 			t.Errorf("в архиве файл Go: %s", f.Name)
 		}
 	}
-	for _, want := range []string{"manifest.json", "popup.html", "popup.js", "options.html", "options.js", "client.js", "style.css", "icons/128.png"} {
+	for _, want := range []string{"manifest.json", "popup.html", "popup.js", "options.html", "options.js", "client.js", "background.js", "style.css", "icons/128.png"} {
 		if !names["listok-extension/"+want] {
 			t.Errorf("в архиве нет %s", want)
 		}

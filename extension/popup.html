@@ -19,15 +19,36 @@
   </div>
 
   <form id="form" hidden>
-    <label>Сайт
-      <input type="text" id="input" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="example.com">
-    </label>
-    <div id="preview" class="preview" aria-live="polite"></div>
-    <label class="inline"><input type="checkbox" id="exact"> Только этот хост</label>
+    <div>
+      <div class="main-row">
+        <input type="checkbox" id="main-on" checked aria-label="Добавить этот сайт">
+        <input type="text" id="input" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="example.com" aria-label="Сайт">
+      </div>
+      <div id="preview" class="preview" aria-live="polite"></div>
+    </div>
+
+    <div id="failed" class="resources" hidden>
+      <div class="section"><span>Не загрузилось на этой странице</span><span id="failed-count"></span></div>
+      <div id="failed-rows" class="rows"></div>
+    </div>
+
+    <details id="other" hidden>
+      <summary>Остальные домены страницы: <span id="other-count"></span></summary>
+      <div id="other-rows" class="rows"></div>
+    </details>
+
     <label>Список
       <select id="list"></select>
     </label>
-    <input type="text" id="comment" maxlength="200" autocomplete="off" placeholder="Комментарий (необязательно)" aria-label="Комментарий">
+
+    <details>
+      <summary>Комментарий, только этот хост</summary>
+      <div class="options-box">
+        <input type="text" id="comment" maxlength="200" autocomplete="off" placeholder="Комментарий (необязательно)" aria-label="Комментарий">
+        <label class="inline"><input type="checkbox" id="exact"> Только этот хост</label>
+      </div>
+    </details>
+
     <button class="primary" type="submit" id="add">Добавить</button>
   </form>
 

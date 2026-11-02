@@ -9,11 +9,6 @@ function addCheck(text, kind) {
   $("checks").append(el);
 }
 
-function originPattern(url) {
-  const u = new URL(url);
-  return u.protocol + "//" + u.hostname + "/*";
-}
-
 function isPlainRemote(url) {
   const u = new URL(url);
   return u.protocol === "http:" && u.hostname !== "localhost" && u.hostname !== "127.0.0.1";
@@ -31,7 +26,7 @@ async function checkAddress(url, token) {
   }
 }
 
-function save(e) {
+async function save(e) {
   e.preventDefault();
   $("checks").replaceChildren();
   let urls;
@@ -42,19 +37,10 @@ function save(e) {
     return;
   }
   const token = $("token").value.trim();
-  // Разрешение спрашивается только сразу по нажатию, поэтому до первого await.
-  const granted = chrome.permissions.request({ origins: urls.map(originPattern) }).catch(() => false);
-  apply(urls, token, granted);
-}
-
-async function apply(urls, token, granted) {
   await saveSettings({ urls, token, active: urls[0] });
   $("url").value = urls[0];
   $("fallback").value = urls[1] || "";
   $("connection").value = "";
-  if (!(await granted)) {
-    addCheck("Браузер не дал доступ к адресу. По https это обычно не мешает, а локальный адрес может не заработать.", "warn");
-  }
   for (const url of urls) {
     if (isPlainRemote(url)) addCheck(`${url}: без https токен идёт по сети открытым текстом.`, "warn");
   }

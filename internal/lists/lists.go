@@ -176,6 +176,16 @@ func (s *Service) Preview(ctx context.Context, u store.User, input string, opt e
 	return items, s.annotate(ctx, u, items, targetID, true)
 }
 
+// PreviewEach разбирает токены независимо друг от друга: в отличие от Preview, два хоста одного домена
+// не считаются повтором. Нужно, чтобы свести хосты страницы к доменам (GET /api/v1/check).
+func (s *Service) PreviewEach(ctx context.Context, u store.User, tokens []string, opt entry.Options) ([]Item, error) {
+	items := make([]Item, 0, len(tokens))
+	for _, t := range tokens {
+		items = append(items, Item{Result: entry.Parse(t, opt)})
+	}
+	return items, s.annotate(ctx, u, items, 0, false)
+}
+
 // annotate заполняет покрытие разобранных записей по видимым пользователю спискам.
 // withCovers — искать и записи, которые станут лишними: это перебор всего индекса на каждую запись.
 func (s *Service) annotate(ctx context.Context, u store.User, items []Item, targetID int64, withCovers bool) error {

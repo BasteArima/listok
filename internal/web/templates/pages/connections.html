@@ -8,13 +8,13 @@
   <div class="new-token">
     <h2>Токен «{{.Name}}» создан</h2>
     <p class="small">Скопируйте сейчас: показывается один раз. Потерянный токен можно отозвать и создать новый.</p>
-    <label>Строка подключения — для расширения
+    <label>Строка подключения — для расширения и команды на iPad
       <span class="copy-row">
         <input class="mono" readonly value="{{.Connection}}" id="new-connection">
         <button class="small-btn" type="button" data-copy="new-connection">Копировать</button>
       </span>
     </label>
-    <label>Токен — для команды на iPad
+    <label>Токен — если собираете команду вручную
       <span class="copy-row">
         <input class="mono" readonly value="{{.Token}}" id="new-token">
         <button class="small-btn" type="button" data-copy="new-token">Копировать</button>
@@ -58,9 +58,9 @@
 
 <section class="card">
   <h2>Расширение для Chrome</h2>
-  <p class="muted small">Работает в Chrome на Windows и Mac, а также в Edge. Версия {{.ExtensionVersion}}.</p>
+  <p class="muted small">Работает в Chrome на Windows и Mac, а также в Edge. Версия {{.ExtensionVersion}}. Chrome предупредит, что расширение читает данные на всех сайтах: так оно видит, какие домены страницы не загрузились. Домены уходят только на этот сервис.</p>
   <ol class="steps">
-    <li><a href="/extension.zip">Скачайте расширение</a> и распакуйте в папку, которая никуда не денется.</li>
+    <li><a href="/extension.zip">Скачайте расширение</a> и распакуйте в папку, которая никуда не денется. Новая версия: замените файлы в папке и нажмите «Обновить» на странице расширений.</li>
     <li>Откройте <code>chrome://extensions</code>, включите «Режим разработчика», нажмите «Загрузить распакованное» и выберите папку.</li>
     <li>Создайте токен выше и вставьте строку подключения в настройки расширения.</li>
   </ol>
@@ -69,7 +69,16 @@
 
 <section class="card">
   <h2>Команда для iPad и iPhone</h2>
-  <p class="muted small">Добавляет сайт из меню «Поделиться» в Safari. Собирается один раз в приложении «Команды», аккаунт разработчика не нужен.</p>
+  <p class="muted small">Добавляет сайт из меню «Поделиться» в Safari. Аккаунт разработчика не нужен.</p>
+  {{if .ShortcutReady}}
+  <ol class="steps">
+    <li>Откройте эту страницу на iPad, создайте токен и скопируйте строку подключения.</li>
+    <li><a href="/shortcut/listok.shortcut">Скачайте команду</a>, откройте файл, нажмите «Добавить команду» и вставьте строку.</li>
+    <li>В Safari: «Поделиться» → «В listok» → выберите список.</li>
+  </ol>
+  {{end}}
+  <details>
+    <summary class="muted small">Собрать вручную</summary>
   <ol class="steps">
     <li>«Команды» → новая команда → в настройках команды включите «Показывать в Поделиться» и оставьте типы «URL» и «Веб-страницы Safari».</li>
     <li>Добавьте действие «Получить содержимое URL». Адрес — из таблицы ниже, метод <code>POST</code>, заголовок <code>Authorization</code> со значением <code>Bearer ваш-токен</code>, тело JSON с полем <code>input</code> типа «Текст» и значением «Ввод команды».</li>
@@ -87,6 +96,7 @@
   </table>
   </div>
   {{end}}
+  </details>
 </section>
 {{end}}
 {{end}}

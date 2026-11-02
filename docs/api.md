@@ -29,8 +29,8 @@
 
 | Метод | Путь | Назначение |
 |---|---|---|
-| GET | `/api/v1/lists` | `{user, lists:[{slug, title, entries, can_edit}]}`: видимые списки, `entries` — включённые записи |
-| GET | `/api/v1/check?q=...&exact=1` | `{items:[...]}`: как разберётся ввод и где он уже покрыт. Ничего не меняет |
+| GET | `/api/v1/lists` | `{user, lists:[{slug, title, entries, can_edit}], menu:{название: slug}}`: видимые списки, `entries` — включённые записи; `menu` — куда можно добавлять, для меню команды на iPad |
+| GET | `/api/v1/check?q=...&exact=1` | `{items:[...]}`: как разберётся ввод и где он уже покрыт. Токены через пробел разбираются независимо: хосты одного домена — не повтор. Ничего не меняет |
 | POST | `/api/v1/lists/{slug}/entries` | `{input, comment?, exact_host?}`: сырой ввод, можно целую ссылку, сервер нормализует → `{message, items:[...]}`. Одна версия с `source=api`. `message` — итог фразой, для показа. Повтор безопасен. Без права на запись 403, невидимый список 404, пустой ввод или длинный комментарий 422 |
 
 Элемент `items`: `{input, value, kind, status, error, warnings:[...], covered_by:[{list, slug, value}]}`. `status` только после добавления: `added`, `exists`, `covered`, `error`. Ошибка разбора записи — не ошибка запроса: ответ 200, `status=error`.
@@ -76,6 +76,7 @@
 | `GET /connections`, `POST /connections` | Токены API, расширение, команда для iPad. `POST`: `name`; ответ — та же страница с токеном и строкой подключения, показывается один раз |
 | `POST /connections/{id}/revoke` | Отозвать токен. htmx: 204 + `HX-Redirect` |
 | `GET /extension.zip` | Архив расширения для установки вручную |
+| `GET /shortcut/listok.shortcut` | Подписанная команда для iPad; 404, пока её не подписали |
 
 Действия с подтверждением (`hx-confirm`) приходят от htmx и получают 204 + `HX-Redirect`, обычные формы — 303.
 
