@@ -14,24 +14,21 @@ listok/
 │   ├── store/                   # доступ к данным: по файлу на агрегат (lists.go, entries.go, ...)
 │   ├── entry/                   # нормализация и классификация ввода, проверка покрытия
 │   ├── lists/                   # сервис списков: права (CanEdit), предпросмотр, добавление, правка; держит entry.Index; file.go — импорт и экспорт файлом; slug.go — адрес из названия
-│   ├── feed/                    # сборка фида (Builder, кеш по версиям списков), Render со сторожевой записью, токены; позже Notifier
+│   ├── feed/                    # сборка фида (Builder, кеш по версиям списков), Render со сторожевой записью, токены; Notifier — будит ожидающие long-poll
 │   ├── history/                 # чистые функции: восстановить состояние на версию (Reconstruct), план отката (Diff)
-│   ├── proposal/                # предложения и их принятие
-│   ├── routers/                 # роутеры и фиды: права, состав, отдача по токену (Serve), статус; позже отчёты агента
-│   ├── remote/                  # загрузка внешних списков
+│   ├── routers/                 # роутеры и фиды: права, состав, отдача по токену (Serve), статус; agent.go — установка и протокол агента; позже отчёты агента
 │   ├── auth/                    # пароли (argon2id), токены, сессии, /setup, лимитер входа; позже API-токены и права
 │   ├── jobs/                    # фоновые задачи раз в час: чистка сессий и журнала опросов, бэкап; позже expirer, remote
-│   ├── web/                     # htmx-обработчики, шаблоны, статика
-│   │   ├── handlers_*.go
-│   │   ├── templates/           # layout.html, pages/*.html, partials/*.html
-│   │   └── static/              # htmx.min.js (2.0.11), app.js, app.css, favicon.svg; позже manifest.webmanifest, sw.js
-│   │   ├── handlers_agent.go    # /install/<token>, /agent/v1 (hello, wait, applied), выдача ссылки установки
-│   │   └── handlers_sections.go # карточки секций forkop на странице роутера, состав секции
-│   └── api/                     # JSON API /api/v1 (этап 5); отдача фидов /f/ и API агента пока в web
+│   └── web/                     # htmx-обработчики, шаблоны, статика; отдача фидов /f/ и API агента
+│       ├── handlers_*.go
+│       ├── handlers_agent.go    # /install/<token>, /agent/v1 (hello, wait, applied), выдача ссылки установки
+│       ├── handlers_sections.go # карточки секций forkop на странице роутера, состав секции
+│       ├── templates/           # layout.html, pages/*.html, partials/*.html
+│       └── static/              # htmx.min.js (2.0.11), app.js, app.css, favicon.svg; позже manifest.webmanifest, sw.js
 ├── agent/
 │   ├── agent.go                 # go:embed файлов агента, Version, сборка установщика
 │   ├── listok-agent.uc          # агент на роутере (ucode)
-│   ├── listok-agent.init        # procd init-скрипт, экземпляр на секцию
+│   ├── listok-agent.init        # procd init-скрипт, один процесс на все секции
 │   └── install.sh.tmpl          # шаблон установщика (разделители [[ ]]), отдаётся по /install/<token>
 ├── .github/workflows/image.yml  # тесты + образ ghcr.io/bastearima/listok на push в main
 └── deploy/
@@ -39,11 +36,13 @@ listok/
     └── compose.yml              # пример стека Portainer за NPM: network_mode bridge, 172.17.0.1:8097
 ```
 
+Пакетов пока нет, появятся вместе с функциями: `internal/proposal` (предложения, этап 3), `internal/remote` (внешние списки, этап 3), `internal/api` (JSON API `/api/v1`, этап 5).
+
 ## Правила слоёв
 
-- `web` и `api` → сервисы (`entry`, `lists`, `feed`, `history`, `routers`, `proposal`) → `store` → `db`. Обратных зависимостей нет.
+- `web` → сервисы (`entry`, `lists`, `feed`, `history`, `routers`) → `store` → `db`. Обратных зависимостей нет.
 - SQL живёт только в `store`. Обработчики SQL не пишут.
-- Проверка прав (`auth.Can(user, list, action)`) выполняется в сервисном слое, а не в шаблонах. Шаблоны только прячут кнопки.
+- Проверка прав (`lists.CanEdit`, `lists.CanManage`; `auth.Can` — этап 3) выполняется в сервисном слое, а не в шаблонах. Шаблоны только прячут кнопки.
 - `entry` — чистые функции без БД, покрываются табличными тестами.
 
 ## Зависимости (минимум)
@@ -52,4 +51,4 @@ listok/
 - `golang.org/x/crypto/argon2` — хеши паролей.
 - `golang.org/x/net/idna`, `golang.org/x/net/publicsuffix` — IDN и регистрируемый домен (eTLD+1).
 - Роутинг: stdlib `http.ServeMux` с шаблонами путей Go 1.22+. Защита от CSRF: `http.CrossOriginProtection` (Go 1.25+).
-- Фронт без сборки: `htmx` + расширение `sse`, `alpine.js` — файлы лежат в `static/`, без CDN.
+- Фронт без сборки: `htmx` лежит в `static/`, без CDN.

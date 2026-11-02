@@ -83,9 +83,9 @@
     {{end}}
     {{if .CanManage}}
     <form method="post" action="/lists/{{.List.Slug}}/delete" hx-post="/lists/{{.List.Slug}}/delete"
-      hx-confirm="Удалить список «{{.List.Title}}» насовсем вместе с историей?{{if .FeedCount}} Он подключён к фидам роутеров ({{.FeedCount}}) — его записи сразу пропадут с роутеров.{{end}} Отменить нельзя, вернуть можно только из бэкапа.">
+      hx-confirm="Удалить список «{{.List.Title}}» насовсем вместе с историей?{{if .FeedCount}} Он подключён к секциям forkop на роутерах ({{.FeedCount}}) — его записи сразу пропадут с роутеров.{{end}} Отменить нельзя, вернуть можно только из бэкапа.">
       <button class="small-btn danger" type="submit">Удалить список</button>
-      <span class="muted small">насовсем, вместе с историей{{if .FeedCount}}; подключён к фидам: {{.FeedCount}}{{end}}</span>
+      <span class="muted small">насовсем, вместе с историей{{if .FeedCount}}; подключён к секциям forkop: {{.FeedCount}}{{end}}</span>
     </form>
     {{end}}
   </details>

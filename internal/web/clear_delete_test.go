@@ -89,7 +89,7 @@ func TestDeleteList(t *testing.T) {
 	_, token, _ := setupRouter(t, e, "work", "games")
 	_, feed := fetchFeed(t, e, token, "")
 	mustContain(t, feed, "youtube.com", "steamcommunity.com")
-	mustContain(t, body(t, e.get(t, "/lists/work")), "подключён к фидам: 1", "его записи сразу пропадут с роутеров")
+	mustContain(t, body(t, e.get(t, "/lists/work")), "подключён к секциям forkop: 1", "его записи сразу пропадут с роутеров")
 
 	expectHXRedirect(t, e.do(t, "POST", "/lists/work/delete", nil), "/lists")
 

@@ -193,10 +193,10 @@ CREATE TABLE routers (
 );
 
 -- 0003: routers.agent_mode TEXT ('wait' | 'poll'), routers.agent_interval_s INTEGER — режим агента из hello.
--- 0005: routers.install_token TEXT — токен ссылки установки открыто, чтобы показывать готовую команду (D-039);
---       стирается вместе с install_token_hash при установке.
 -- 0004: routers.forkop_sections TEXT — секции forkop из hello агента 0.4.0+, JSON [{"name","uci","action"}];
 --       NULL — агент их не присылал.
+-- 0005: routers.install_token TEXT — токен ссылки установки открыто, чтобы показывать готовую команду (D-039);
+--       стирается вместе с install_token_hash при установке.
 
 CREATE TABLE feeds (
   id            INTEGER PRIMARY KEY,
