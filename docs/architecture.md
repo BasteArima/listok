@@ -3,12 +3,13 @@
 ## Компоненты
 
 ```
- браузер/телефон (htmx)               роутер N (OpenWrt + forkop)
-        │  сессия                            │  listok-agent (ucode, procd)
+ браузер/телефон (htmx),              роутер N (OpenWrt + forkop)
+ расширение, команда iPad (/api/v1)          │
+        │  сессия или токен API              │  listok-agent (ucode, procd)
         ▼                                    │   ├─ POST /agent/v1/wait (long-poll по всем секциям)
  ┌───────────────────────────┐               │   ├─ GET /f/<token>.lst (ETag)
  │ listok (Go, один бинарник)│◄──────────────┘   └─ пишет /etc/listok/<section>.lst
- │  web (htmx)  │ /agent/v1  │                      (sing-box без перезапуска)
+ │  web, /api/v1 │ /agent/v1 │                      (sing-box без перезапуска)
  │  feed        │ jobs       │
  │  SQLite (WAL) /data       │
  └───────────────────────────┘

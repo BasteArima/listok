@@ -1,0 +1,92 @@
+{{define "content"}}
+{{with .Data}}
+<section class="card">
+  <h1>Подключения</h1>
+  <p class="muted">Токен нужен расширению браузера и команде на iPad, чтобы добавлять записи без входа в listok. Он может видеть ваши списки и добавлять в них записи, больше ничего.</p>
+
+  {{with .New}}
+  <div class="new-token">
+    <h2>Токен «{{.Name}}» создан</h2>
+    <p class="small">Скопируйте сейчас: показывается один раз. Потерянный токен можно отозвать и создать новый.</p>
+    <label>Строка подключения — для расширения
+      <span class="copy-row">
+        <input class="mono" readonly value="{{.Connection}}" id="new-connection">
+        <button class="small-btn" type="button" data-copy="new-connection">Копировать</button>
+      </span>
+    </label>
+    <label>Токен — для команды на iPad
+      <span class="copy-row">
+        <input class="mono" readonly value="{{.Token}}" id="new-token">
+        <button class="small-btn" type="button" data-copy="new-token">Копировать</button>
+      </span>
+    </label>
+  </div>
+  {{end}}
+
+  {{if .Tokens}}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Название</th><th>Токен</th><th>Создан</th><th>Последний запрос</th><th></th></tr></thead>
+    <tbody>
+    {{range .Tokens}}
+      <tr>
+        <td>{{.Name}}</td>
+        <td class="mono small">{{.Prefix}}…</td>
+        <td class="muted small">{{ago .CreatedAt}}</td>
+        <td class="muted small">{{with .LastUsedAt}}{{ago .}}{{else}}ещё не использовался{{end}}</td>
+        <td class="actions">
+          <form method="post" action="/connections/{{.ID}}/revoke" hx-post="/connections/{{.ID}}/revoke"
+            hx-confirm="Отозвать токен «{{.Name}}»? То, что к нему подключено, перестанет работать.">
+            <button class="small-btn danger" type="submit">Отозвать</button>
+          </form>
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{end}}
+
+  {{with $.Error}}{{template "form-error" .}}{{end}}
+  <form class="token-form" method="post" action="/connections">
+    <label>Новый токен
+      <input name="name" required maxlength="60" value="{{$.Form.name}}" placeholder="ПК, MacBook, iPad" autocomplete="off">
+    </label>
+    <button class="primary" type="submit">Создать</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Расширение для Chrome</h2>
+  <p class="muted small">Работает в Chrome на Windows и Mac, а также в Edge. Версия {{.ExtensionVersion}}.</p>
+  <ol class="steps">
+    <li><a href="/extension.zip">Скачайте расширение</a> и распакуйте в папку, которая никуда не денется.</li>
+    <li>Откройте <code>chrome://extensions</code>, включите «Режим разработчика», нажмите «Загрузить распакованное» и выберите папку.</li>
+    <li>Создайте токен выше и вставьте строку подключения в настройки расширения.</li>
+  </ol>
+  <p class="muted small">Значок удобно закрепить на панели. С клавиатуры: <code>Alt+Shift+L</code>, затем Enter.</p>
+</section>
+
+<section class="card">
+  <h2>Команда для iPad и iPhone</h2>
+  <p class="muted small">Добавляет сайт из меню «Поделиться» в Safari. Собирается один раз в приложении «Команды», аккаунт разработчика не нужен.</p>
+  <ol class="steps">
+    <li>«Команды» → новая команда → в настройках команды включите «Показывать в Поделиться» и оставьте типы «URL» и «Веб-страницы Safari».</li>
+    <li>Добавьте действие «Получить содержимое URL». Адрес — из таблицы ниже, метод <code>POST</code>, заголовок <code>Authorization</code> со значением <code>Bearer ваш-токен</code>, тело JSON с полем <code>input</code> типа «Текст» и значением «Ввод команды».</li>
+    <li>Добавьте «Получить значение из словаря» с ключом <code>message</code> и «Показать уведомление» с результатом.</li>
+  </ol>
+  {{if .Editable}}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Список</th><th>Адрес для команды</th></tr></thead>
+    <tbody>
+    {{range .Editable}}
+      <tr><td>{{.Title}}</td><td class="mono small">{{$.Data.Base}}/api/v1/lists/{{.Slug}}/entries</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{end}}
+</section>
+{{end}}
+{{end}}

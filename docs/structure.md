@@ -19,10 +19,12 @@ listok/
 │   ├── routers/                 # роутеры и фиды: права, состав, отдача по токену (Serve), статус; agent.go — установка и протокол агента; позже отчёты агента
 │   ├── auth/                    # пароли (argon2id), токены, сессии, /setup, лимитер входа; позже API-токены и права
 │   ├── jobs/                    # фоновые задачи раз в час: чистка сессий и журнала опросов, бэкап; позже expirer, remote
-│   └── web/                     # htmx-обработчики, шаблоны, статика; отдача фидов /f/ и API агента
+│   └── web/                     # htmx-обработчики, шаблоны, статика; отдача фидов /f/, API агента и /api/v1
 │       ├── handlers_*.go
 │       ├── handlers_agent.go    # /install/<token>, /agent/v1 (hello, wait, applied), выдача ссылки установки
 │       ├── handlers_sections.go # карточки секций forkop на странице роутера, состав секции
+│       ├── handlers_api.go      # JSON API /api/v1: токен в заголовке, CORS
+│       ├── handlers_connections.go # вкладка «Подключения»: токены API, архив расширения
 │       ├── templates/           # layout.html, pages/*.html, partials/*.html
 │       └── static/              # htmx.min.js (2.0.11), app.js, app.css, favicon.svg; позже manifest.webmanifest, sw.js
 ├── agent/
@@ -30,13 +32,16 @@ listok/
 │   ├── listok-agent.uc          # агент на роутере (ucode)
 │   ├── listok-agent.init        # procd init-скрипт, один процесс на все секции
 │   └── install.sh.tmpl          # шаблон установщика (разделители [[ ]]), отдаётся по /install/<token>
+├── extension/                   # расширение браузера (docs/extension.md)
+│   ├── extension.go             # go:embed, Version, архив для /extension.zip
+│   ├── manifest.json, popup.*, options.*, client.js, style.css, icons/
 ├── .github/workflows/image.yml  # тесты + образ ghcr.io/bastearima/listok на push в main
 └── deploy/
     ├── Dockerfile               # multi-stage, итог: distroless/static-debian12:nonroot; healthcheck = /listok healthcheck
     └── compose.yml              # пример стека Portainer за NPM: network_mode bridge, 172.17.0.1:8097
 ```
 
-Пакетов пока нет, появятся вместе с функциями: `internal/proposal` (предложения, этап 3), `internal/remote` (внешние списки, этап 3), `internal/api` (JSON API `/api/v1`, этап 5).
+Пакетов пока нет, появятся вместе с функциями: `internal/proposal` (предложения, этап 3), `internal/remote` (внешние списки, этап 3).
 
 ## Правила слоёв
 

@@ -33,6 +33,16 @@ type statsData struct {
 	OOB bool
 }
 
+func warnLabel(w entry.Warning) string {
+	switch w {
+	case entry.WarnFakeIP:
+		return "это FakeIP-адрес sing-box: скорее всего, домен уже идёт через туннель — добавьте домен, а не IP"
+	case entry.WarnPrivate:
+		return "частный или служебный диапазон: через туннель его пускать незачем"
+	}
+	return string(w)
+}
+
 var funcs = template.FuncMap{
 	"kindLabel": func(k string) string {
 		switch k {
@@ -71,16 +81,8 @@ var funcs = template.FuncMap{
 		}
 		return s
 	},
-	"warnLabel": func(w entry.Warning) string {
-		switch w {
-		case entry.WarnFakeIP:
-			return "это FakeIP-адрес sing-box: скорее всего, домен уже идёт через туннель — добавьте домен, а не IP"
-		case entry.WarnPrivate:
-			return "частный или служебный диапазон: через туннель его пускать незачем"
-		}
-		return string(w)
-	},
-	"ago": ago,
+	"warnLabel": warnLabel,
+	"ago":       ago,
 	// plural — форма слова по числу: 1 запись, 2 записи, 5 записей.
 	"plural": func(n int, one, few, many string) string {
 		n %= 100

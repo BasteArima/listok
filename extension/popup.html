@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>listok</title>
+<link rel="stylesheet" href="style.css">
+<script type="module" src="popup.js"></script>
+</head>
+<body>
+<main class="popup">
+  <div class="popup-head">
+    <span>listok</span>
+    <a href="#" id="settings">Настройки</a>
+  </div>
+
+  <div id="setup" hidden>
+    <p>Подключите расширение к listok: нужна строка подключения с вкладки «Подключения».</p>
+    <button class="primary" type="button" id="open-settings">Открыть настройки</button>
+  </div>
+
+  <form id="form" hidden>
+    <label>Сайт
+      <input type="text" id="input" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="example.com">
+    </label>
+    <div id="preview" class="preview" aria-live="polite"></div>
+    <label class="inline"><input type="checkbox" id="exact"> Только этот хост</label>
+    <label>Список
+      <select id="list"></select>
+    </label>
+    <input type="text" id="comment" maxlength="200" autocomplete="off" placeholder="Комментарий (необязательно)" aria-label="Комментарий">
+    <button class="primary" type="submit" id="add">Добавить</button>
+  </form>
+
+  <div id="result" class="msg" role="status" hidden></div>
+</main>
+</body>
+</html>

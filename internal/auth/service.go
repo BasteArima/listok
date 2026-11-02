@@ -28,6 +28,7 @@ var (
 	ErrNoSession          = errors.New("сессии нет или она истекла")
 	ErrSetupDone          = errors.New("первичная настройка уже выполнена")
 	ErrSetupToken         = errors.New("неверный setup-токен")
+	ErrBadTokenName       = errors.New("название токена: от 1 до 60 символов")
 	ErrBadUsername        = errors.New("логин: 2–32 символа, латиница, цифры, точка, дефис, подчёркивание")
 	ErrWeakPassword       = fmt.Errorf("пароль: от %d до %d символов", MinPasswordLen, maxPasswordLen)
 )
@@ -229,6 +230,41 @@ func (s *Service) Authenticate(ctx context.Context, token string) (store.User, e
 		}
 	}
 	return u, nil
+}
+
+// CreateAPIToken выдаёт токен API. Возвращает его целиком: в БД остаётся только хеш (D-040).
+func (s *Service) CreateAPIToken(ctx context.Context, u store.User, name, ip string) (string, error) {
+	name = strings.TrimSpace(name)
+	if n := utf8.RuneCountInString(name); n < 1 || n > 60 {
+		return "", ErrBadTokenName
+	}
+	token := NewToken(32)
+	if _, err := s.store.CreateAPIToken(ctx, u.ID, name, HashToken(token), TokenPrefix(token), s.now()); err != nil {
+		return "", err
+	}
+	s.audit(ctx, u.ID, "api_token.create", map[string]any{"name": name, "prefix": TokenPrefix(token)}, ip)
+	return token, nil
+}
+
+// RevokeAPIToken отзывает токен пользователя. Чужой или уже отозванный — store.ErrNotFound.
+func (s *Service) RevokeAPIToken(ctx context.Context, u store.User, id int64, ip string) error {
+	if err := s.store.RevokeAPIToken(ctx, id, u.ID, s.now()); err != nil {
+		return err
+	}
+	s.audit(ctx, u.ID, "api_token.revoke", map[string]any{"id": id}, ip)
+	return nil
+}
+
+// AuthenticateAPI — пользователь по токену API.
+func (s *Service) AuthenticateAPI(ctx context.Context, token string) (store.User, error) {
+	if token == "" {
+		return store.User{}, ErrNoSession
+	}
+	u, err := s.store.UseAPIToken(ctx, HashToken(token), s.now())
+	if errors.Is(err, store.ErrNotFound) || (err == nil && u.DisabledAt != nil) {
+		return store.User{}, ErrNoSession
+	}
+	return u, err
 }
 
 func (s *Service) Logout(ctx context.Context, token string, userID int64, ip string) error {

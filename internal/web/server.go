@@ -71,6 +71,12 @@ func New(d Deps) (*Server, error) {
 	mux.HandleFunc("POST /login", s.loginSubmit)
 	mux.HandleFunc("POST /logout", s.logout)
 
+	api := func(pattern string, h http.HandlerFunc) { mux.HandleFunc(pattern, s.limited(apiCORS(s.apiAuth(h)))) }
+	mux.HandleFunc("OPTIONS /api/v1/", apiCORS(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	api("GET /api/v1/lists", s.apiLists)
+	api("GET /api/v1/check", s.apiCheck)
+	api("POST /api/v1/lists/{slug}/entries", s.apiAddEntries)
+
 	authed := func(pattern string, h http.HandlerFunc) { mux.Handle(pattern, s.requireUser(h)) }
 	authed("GET /{$}", s.home)
 	authed("POST /preview", s.preview)
@@ -93,6 +99,10 @@ func New(d Deps) (*Server, error) {
 	authed("GET /lists/{slug}/history/more", s.historyMore)
 	authed("GET /lists/{slug}/history/{version}", s.historyVersion)
 	authed("POST /lists/{slug}/rollback/{version}", s.rollback)
+	authed("GET /connections", s.connectionsPage)
+	authed("POST /connections", s.createConnection)
+	authed("POST /connections/{id}/revoke", s.revokeConnection)
+	authed("GET /extension.zip", s.extensionZip)
 	authed("GET /routers", s.routersPage)
 	authed("POST /routers", s.createRouter)
 	authed("GET /routers/{id}", s.routerPage)
@@ -120,6 +130,9 @@ func New(d Deps) (*Server, error) {
 			return nil, err
 		}
 	}
+	// /api/v1 авторизуется только заголовком и cookie не смотрит: подделать такой запрос с чужой страницы нельзя,
+	// а запрос из расширения браузера защита сочла бы межсайтовым (D-040).
+	cop.AddInsecureBypassPattern("/api/v1/")
 
 	s.handler = securityHeaders(cop.Handler(s.setupGate(s.loadUser(mux))))
 	return s, nil

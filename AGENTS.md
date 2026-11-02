@@ -30,6 +30,7 @@
 | Скрипт на роутере, установка, отчёты из clash API | [docs/router-agent.md](docs/router-agent.md) |
 | Как устроен forkop внутри: что проверено и где грабли | [docs/forkop-integration.md](docs/forkop-integration.md) |
 | Экраны и поведение интерфейса | [docs/ui.md](docs/ui.md) |
+| Расширение браузера, команда для iPad, токены API | [docs/extension.md](docs/extension.md) |
 | Docker, NPM, бэкапы, переменные окружения | [docs/deploy.md](docs/deploy.md) |
 | Почему решено так, а не иначе | [docs/decisions.md](docs/decisions.md) |
 | Что делать и в каком порядке | [docs/roadmap.md](docs/roadmap.md) |
@@ -52,4 +53,4 @@
 
 ## Кратко о стеке
 
-Go (stdlib `net/http`, `html/template`), SQLite (`modernc.org/sqlite`, без CGO), htmx, встроенный через `go:embed`. Один бинарник, Docker. На роутере агент на ucode: тот же язык, на котором написан forkop.
+Go (stdlib `net/http`, `html/template`), SQLite (`modernc.org/sqlite`, без CGO), htmx, встроенный через `go:embed`. Один бинарник, Docker. На роутере агент на ucode: тот же язык, на котором написан forkop. Расширение браузера в `extension/`: Manifest V3, без сборки, встроено в бинарник.

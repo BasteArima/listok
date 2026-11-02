@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>listok: настройки</title>
+<link rel="stylesheet" href="style.css">
+<script type="module" src="options.js"></script>
+</head>
+<body>
+<main class="options">
+  <h1>Настройки listok</h1>
+  <p class="muted">В listok откройте вкладку «Подключения», создайте токен и вставьте сюда строку подключения. Адрес и токен заполнятся сами.</p>
+
+  <form id="form">
+    <label>Строка подключения
+      <input type="text" id="connection" class="mono" autocomplete="off" spellcheck="false" placeholder="https://listok.example.com#токен">
+    </label>
+    <label>Адрес listok
+      <input type="text" id="url" class="mono" autocomplete="off" spellcheck="false" placeholder="https://listok.example.com" required>
+    </label>
+    <label>Запасной адрес, необязательно
+      <input type="text" id="fallback" class="mono" autocomplete="off" spellcheck="false" placeholder="http://192.168.1.10:8080">
+      <span class="muted small">Например, адрес в домашней сети. Используется, если основной не отвечает.</span>
+    </label>
+    <label>Токен
+      <input type="password" id="token" class="mono" autocomplete="off" spellcheck="false" required>
+    </label>
+    <button class="primary" type="submit">Сохранить и проверить</button>
+  </form>
+
+  <div id="checks" class="checks" role="status"></div>
+</main>
+</body>
+</html>
